@@ -1,0 +1,50 @@
+name: Build codex-plus-launcher (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build launcher release
+        run: cargo build -p codex-plus-launcher --release
+
+      - name: Download new-api.exe (Windows) from upstream NewAPI release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f bundled/new-api.exe ]; then
+            gh release download v1.0.0-rc.20 -R QuantumNous/new-api \
+              --pattern 'new-api-v1.0.0-rc.20.exe' --dir bundled
+            mv bundled/new-api-v1.0.0-rc.20.exe bundled/new-api.exe
+          else
+            echo "bundled/new-api.exe already present, skipping download"
+          fi
+
+      - name: Stage bundle (launcher + new-api.exe)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/launcher | Out-Null
+          Copy-Item target/release/codex-plus-plus.exe dist/launcher/
+          if (Test-Path bundled/new-api.exe) { Copy-Item bundled/new-api.exe dist/launcher/ }
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-plus-launcher-bundle
+          path: dist/launcher/*

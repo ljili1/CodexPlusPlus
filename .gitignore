@@ -25,3 +25,6 @@ tools/codex-wechat/config.local.json
 pnpm-lock.yaml
 pnpm-workspace.yaml
 
+# new-api.exe is downloaded at build time from the upstream NewAPI release; never commit the 134MB binary
+bundled/new-api.exe
+

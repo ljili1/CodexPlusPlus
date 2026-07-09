@@ -38,12 +38,26 @@ jobs:
       - name: Build binaries
         run: cargo build --release
 
+      - name: Download new-api.exe (Windows) from upstream NewAPI release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f bundled/new-api.exe ]; then
+            gh release download v1.0.0-rc.20 -R QuantumNous/new-api \
+              --pattern 'new-api-v1.0.0-rc.20.exe' --dir bundled
+            mv bundled/new-api-v1.0.0-rc.20.exe bundled/new-api.exe
+          else
+            echo "bundled/new-api.exe already present, skipping download"
+          fi
+
       - name: Stage Windows app files
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/windows/app | Out-Null
           Copy-Item target/release/codex-plus-plus.exe dist/windows/app/
           Copy-Item target/release/codex-plus-plus-manager.exe dist/windows/app/
+          if (Test-Path bundled/new-api.exe) { Copy-Item bundled/new-api.exe dist/windows/app/ }
 
       - name: Build Windows zip asset
         shell: pwsh

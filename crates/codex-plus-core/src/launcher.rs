@@ -212,6 +212,7 @@ pub trait LaunchHooks: Send + Sync {
 #[derive(Default)]
 pub struct DefaultLaunchHooks {
     child: Mutex<Option<Child>>,
+    newapi: Mutex<Option<Child>>,
     helper: Mutex<Option<HelperRuntime>>,
     bridge_watchdog: Mutex<Option<BridgeWatchdogRuntime>>,
     computer_use_guard_watchdog: Mutex<Option<ComputerUseGuardWatchdogRuntime>>,
@@ -655,6 +656,41 @@ impl LaunchHooks for DefaultLaunchHooks {
         let native_menu_inspector_port =
             native_menu_localization_enabled.then(|| select_native_menu_inspector_port(debug_port));
         let launch_extra_args = codex_extra_args_for_launch(settings, extra_args);
+        // Spawn NewAPI alongside Codex++ so it starts and stops together with no window.
+        // NewAPI binary is expected next to this executable (same install dir).
+        // Override the binary path with the NEWAPI_EXE_PATH env var if needed.
+        #[cfg(windows)]
+        {
+            let newapi_path = std::env::var("NEWAPI_EXE_PATH").ok().or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("new-api.exe")))
+                    .map(|p| p.to_string_lossy().into_owned())
+            });
+            if let Some(path) = newapi_path {
+                // Skip if something is already serving on port 3000.
+                let addr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+                    std::net::Ipv4Addr::LOCALHOST,
+                    3000,
+                ));
+                let already_up = std::net::TcpStream::connect_timeout(
+                    &addr,
+                    std::time::Duration::from_millis(300),
+                )
+                .is_ok();
+                if !already_up {
+                    let mut cmd = Command::new(path);
+                    cmd.arg("--port")
+                        .arg("3000")
+                        .creation_flags(crate::windows_integration::CREATE_NO_WINDOW)
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null());
+                    if let Ok(mut child) = cmd.spawn() {
+                        *self.newapi.lock().await = Some(child);
+                    }
+                }
+            }
+        }
         if cfg!(windows) {
             let activation = if let Some(inspector_port) = native_menu_inspector_port {
                 build_packaged_activation_with_native_menu_inspector(
@@ -871,6 +907,10 @@ impl LaunchHooks for DefaultLaunchHooks {
                 empty_streak = 0;
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        // Stop the bundled NewAPI process when Codex++ exits.
+        if let Some(mut child) = self.newapi.lock().await.take() {
+            let _ = child.kill().await;
         }
         Ok(())
     }
