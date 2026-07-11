@@ -921,6 +921,10 @@ body {
   min-width: 76px;
 }
 
+.relay-newapi-button {
+  min-width: 96px;
+}
+
 .relay-card-extra {
   display: inline-flex;
   gap: 6px;

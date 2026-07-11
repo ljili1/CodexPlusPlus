@@ -320,6 +320,12 @@ CodexPlusPlus 采用 [GNU Affero General Public License v3.0](LICENSE)，SPDX �
 
 许可证只覆盖 CodexPlusPlus 自身代码，不授予 OpenAI、ChatGPT、Codex 的商标、应用资源或其他第三方内容的权利。
 
+## 开源致谢
+
+- [new-api (QuantumNous/new-api)](https://github.com/QuantumNous/new-api)：Codex++ 的 NEWAPI 供应商依赖其二进制提供 One API / New API 兼容的本地中转能力。
+
 ## 兼容性说明
+
+## 说明
 
 Codex++ 依赖官方桌面应用的页面结构、CDP 和本地数据格式。官方应用更新后，部分注入功能可能需要跟随适配；修改供应商配置或本地会话数据前应保留备份。

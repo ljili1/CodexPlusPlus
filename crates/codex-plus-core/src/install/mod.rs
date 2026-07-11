@@ -13,6 +13,7 @@ pub const SILENT_BINARY: &str = "codex-plus-plus";
 pub const MANAGER_BINARY: &str = "codex-plus-plus-manager";
 pub const SILENT_BUNDLE_ID: &str = "com.bigpizzav3.codexplusplus";
 pub const MANAGER_BUNDLE_ID: &str = "com.bigpizzav3.codexplusplus.manager";
+pub const NEWAPI_BINARY: &str = "newapi";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -308,6 +309,17 @@ pub fn macos_companion_bundle_identifier_from_exe(
         MANAGER_BINARY => Some(MANAGER_BUNDLE_ID),
         _ => None,
     }
+}
+
+pub fn newapi_binary_path() -> PathBuf {
+    // newapi 不再随签名后的 .app / 安装包分发，而是在运行时（安装/首次启动阶段）
+    // 下载到本工具的「安装目录」——即当前可执行文件所在目录，与
+    // codex-plus-plus / codex-plus-plus-manager 同级。这样既能在「目标目录已存在
+    // newapi 时跳过下载」（见 newapi.rs 的 download_newapi_if_missing），又避免
+    // macOS arm64 因第三方二进制未签名导致 codesign 失败（下载发生在安装之后，
+    // 不进入签名包）。
+    companion_binary_path(NEWAPI_BINARY)
+}
 }
 
 pub fn companion_binary_path_from_exe(exe: &Path, binary: &str) -> PathBuf {

@@ -283,6 +283,12 @@ CodexPlusPlus is licensed under the [GNU Affero General Public License v3.0](LIC
 
 The license covers CodexPlusPlus code only. It does not grant rights to OpenAI, ChatGPT, Codex trademarks, application assets, or other third-party content.
 
+## Acknowledgements
+
+- [new-api (QuantumNous/new-api)](https://github.com/QuantumNous/new-api): the Codex++ NEWAPI provider relies on its binary to offer a local relay compatible with One API / New API.
+
 ## Compatibility
+
+## Notes
 
 Codex++ depends on the official desktop app's page structure, CDP behavior, and local data formats. Official app updates may require injection updates. Keep backups before changing provider configuration or local session data.

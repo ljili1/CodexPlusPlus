@@ -281,6 +281,15 @@ export const PRESETS: ProviderPreset[] = [
 
   // ── 第三方 ──
   {
+    id: "newapi",
+    name: "NEW API",
+    category: "third_party",
+    baseUrl: "http://localhost:3000/v1",
+    protocol: "chatCompletions",
+    model: "gpt-5.5",
+    websiteUrl: "http://localhost:3000",
+  },
+  {
     id: "azure",
     name: "Azure OpenAI",
     category: "third_party",

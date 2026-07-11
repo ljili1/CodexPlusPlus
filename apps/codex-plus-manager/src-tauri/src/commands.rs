@@ -1923,6 +1923,40 @@ pub fn switch_relay_profile(
     }
 }
 
+const NEWAPI_OWNER_MANAGER: &str = "manager";
+
+/// 当管理工具以 NEW API 作为供应商时唤起 newapi 进程（后台静默）。
+#[tauri::command]
+pub fn ensure_newapi() -> CommandResult<Value> {
+    codex_plus_core::newapi::ensure_newapi_running(NEWAPI_OWNER_MANAGER);
+    let running = codex_plus_core::newapi::is_newapi_running();
+    let message = if running {
+        "newapi 进程已运行。"
+    } else {
+        "newapi 进程未运行，请检查 newapi 可执行文件是否存在。"
+    };
+    ok(message, json!({ "running": running }))
+}
+
+/// 当管理工具不再以 NEW API 作为供应商时释放 newapi 租约。
+#[tauri::command]
+pub fn release_newapi() -> CommandResult<Value> {
+    codex_plus_core::newapi::release_newapi(NEWAPI_OWNER_MANAGER);
+    ok("已释放 newapi 租约。", json!({ "running": codex_plus_core::newapi::is_newapi_running() }))
+}
+
+/// 读取 newapi 可执行文件可用性与运行状态。
+#[tauri::command]
+pub fn newapi_status() -> CommandResult<Value> {
+    ok(
+        "newapi 状态已读取。",
+        json!({
+            "available": codex_plus_core::newapi::newapi_is_available(),
+            "running": codex_plus_core::newapi::is_newapi_running(),
+        }),
+    )
+}
+
 #[tauri::command]
 pub fn write_diagnostic_event(event: String, detail: Value) -> CommandResult<Value> {
     let event = sanitize_manager_event(&event);

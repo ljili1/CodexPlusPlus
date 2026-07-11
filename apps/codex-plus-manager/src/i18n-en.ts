@@ -657,6 +657,15 @@ export const EN_PLAIN: Record<string, string> = {
   "正在读取本机环境": "Reading the local environment",
   "重新检测": "Check again",
   "排查可能干扰中转站配置的本机环境": "Find local environment settings that may interfere with relay configuration",
+  "启动 NEWAPI": "Start NEWAPI",
+  "停止 NEWAPI": "Stop NEWAPI",
+  "NEWAPI 启动失败": "NEWAPI startup failed",
+  "无法启动 newapi 进程，请检查可执行文件是否存在。": "Unable to start the newapi process. Check that the executable exists.",
+  "NEWAPI 未启动": "NEWAPI not running",
+  "已切换到 NEWAPI 供应商，但 newapi 进程未能启动。请检查 newapi 可执行文件是否存在于 Codex++ 安装目录。":
+    "Switched to the NEWAPI provider, but the newapi process failed to start. Check that the newapi executable exists in the Codex++ install directory.",
+  "启动 newapi 后台进程": "Start the newapi background process",
+  "停止 newapi 后台进程": "Stop the newapi background process",
 };
 
 // Interpolated strings: tf("前缀 {0}", [x]) -> EN_TEMPLATE["前缀 {0}"] with {0} filled.

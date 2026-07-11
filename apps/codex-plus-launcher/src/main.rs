@@ -31,6 +31,16 @@ impl Default for LauncherHooks {
     }
 }
 
+/// 退出作用域时释放 launcher 持有的 newapi 租约，确保 codex++ 关闭后
+/// 在管理工具也未占用的情况下能终止 newapi 进程。
+struct NewApiLeaseGuard;
+
+impl Drop for NewApiLeaseGuard {
+    fn drop(&mut self) {
+        codex_plus_core::newapi::release_newapi("launcher");
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -51,8 +61,21 @@ async fn main() -> Result<()> {
         let _ = notify_manager_when_update_available().await;
     });
     let hooks = LauncherHooks::default();
+
+    // 若当前供应商为 NEW API，唤起 newapi 进程（后台静默）
+    let mut newapi_lease: Option<NewApiLeaseGuard> = None;
+    if let Ok(settings) = hooks.load_settings().await {
+        if settings.relay_profiles_enabled
+            && codex_plus_core::newapi::active_profile_uses_newapi(&settings)
+        {
+            codex_plus_core::newapi::ensure_newapi_running("launcher");
+            newapi_lease = Some(NewApiLeaseGuard);
+        }
+    }
+
     let handle = launch_and_inject_with_hooks(options, &hooks).await?;
     handle.wait_for_codex_exit().await?;
+    drop(newapi_lease);
     Ok(())
 }
 

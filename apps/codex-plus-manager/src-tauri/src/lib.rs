@@ -109,6 +109,9 @@ pub fn run() {
             commands::test_stepwise_settings,
             commands::fetch_relay_profile_models,
             commands::switch_relay_profile,
+            commands::ensure_newapi,
+            commands::release_newapi,
+            commands::newapi_status,
             commands::apply_relay_injection,
             commands::apply_pure_api_injection,
             commands::clear_relay_injection,
@@ -128,6 +131,16 @@ pub fn run() {
 }
 
 fn install_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    // 启动时为当前供应商（若为 NEW API）拉起 newapi 进程
+    let initial_settings = codex_plus_core::settings::SettingsStore::default()
+        .load()
+        .unwrap_or_default();
+    if initial_settings.relay_profiles_enabled
+        && codex_plus_core::newapi::active_profile_uses_newapi(&initial_settings)
+    {
+        codex_plus_core::newapi::ensure_newapi_running("manager");
+    }
+
     let show_item = MenuItem::with_id(app, TRAY_MENU_SHOW, "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT, "退出程序", true, None::<&str>)?;
     let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
@@ -140,6 +153,7 @@ fn install_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
                 show_main_window(app);
             }
             TRAY_MENU_QUIT => {
+                codex_plus_core::newapi::release_newapi("manager");
                 APP_EXITING.store(true, Ordering::SeqCst);
                 app.exit(0);
             }
@@ -193,6 +207,7 @@ fn register_main_window_events<R: tauri::Runtime>(window: tauri::WebviewWindow<R
 
 #[tauri::command]
 fn manager_exit_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    codex_plus_core::newapi::release_newapi("manager");
     APP_EXITING.store(true, Ordering::SeqCst);
     app.exit(0);
 }

@@ -39,6 +39,7 @@ const initialFor = (name: string): string => {
 
 export function createPresetPatch(preset: ProviderPreset): PresetPatch {
   return {
+    id: preset.id === "newapi" ? preset.id : undefined,
     name: preset.name,
     baseUrl: preset.baseUrl,
     upstreamBaseUrl: preset.baseUrl,

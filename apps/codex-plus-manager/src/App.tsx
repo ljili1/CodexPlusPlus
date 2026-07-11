@@ -55,7 +55,7 @@ import {
 } from "lucide-react";
 import { ProviderPresetSelector } from "@/components/ProviderPresetSelector";
 import type { PresetPatch } from "@/components/ProviderPresetSelector";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { Badge as UiBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1777,8 +1777,33 @@ export function App() {
         launchMode: selectedSettings.launchMode,
         status: result.status,
       });
+      // NEW API 作为供应商时自动唤起 newapi；切换到其它供应商时释放租约
+      await syncNewApiProcess(currentSelected);
+      showNotice(t("供应商切换"), relayProfileModeSwitchedText(currentSelected), result.status);
     } finally {
       setRelaySwitching(false);
+    }
+  };
+
+  const syncNewApiProcess = async (profile: RelayProfile) => {
+    try {
+      // 切换到 NEWAPI 供应商时确保 newapi 已运行（自动拉起）。
+      // 关键：切换供应商【不】关闭 newapi。newapi 仅在以下情况被释放并结束：
+      //   - 在供应商卡片手动点击「停止 NEWAPI」按钮（stopNewapi → release_newapi）
+      //   - 管理工具退出 / 全部关闭（manager_exit_app、托盘退出，以及 CodeX++ 静默启动器退出）
+      // 这样可连续在供应商间切换而不会反复杀死/重启 newapi。
+      if (profileUsesNewapi(profile)) {
+        const result = await call<CommandResult<{ running: boolean }>>("ensure_newapi", {});
+        if (result?.running !== true) {
+          showNotice(
+            t("NEWAPI 未启动"),
+            t("已切换到 NEWAPI 供应商，但 newapi 进程未能启动。请检查 newapi 可执行文件是否存在于 Codex++ 安装目录。"),
+            "failed",
+          );
+        }
+      }
+    } catch (error) {
+      logDiagnostic("syncNewApiProcess.failed", { error: stringifyError(error) });
     }
   };
 
@@ -2025,6 +2050,21 @@ export function App() {
       fetchRelayProfileModels,
       switchRelayProfile,
       relaySwitching,
+      startNewapi: async () => {
+        const result = await run(() => call<CommandResult<{ running: boolean }>>("ensure_newapi", {}));
+        return !!result && result.running === true;
+      },
+      stopNewapi: async () => {
+        const result = await run(() => call<CommandResult<{ running: boolean }>>("release_newapi", {}));
+        return !!result && result.running === true;
+      },
+      newapiStatus: async () => {
+        const result = await run(() => call<CommandResult<{ available: boolean; running: boolean }>>("newapi_status", {}));
+        return {
+          available: !!result && result.available === true,
+          running: !!result && result.running === true,
+        };
+      },
       switchOfficialMode,
       switchPureApiMode,
       refreshLogs,
@@ -2306,6 +2346,9 @@ type Actions = {
   fetchRelayProfileModels: (profile: RelayProfile) => Promise<string[] | null>;
   switchRelayProfile: (settings: BackendSettings, previousActiveRelayId?: string) => Promise<void>;
   relaySwitching: boolean;
+  startNewapi: () => Promise<boolean>;
+  stopNewapi: () => Promise<boolean>;
+  newapiStatus: () => Promise<{ available: boolean; running: boolean }>;
   switchOfficialMode: () => Promise<void>;
   switchPureApiMode: () => Promise<void>;
   refreshLogs: () => Promise<void>;
@@ -3834,9 +3877,55 @@ function SortableRelayProfileCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: profile.id });
   const active = profile.id === form.activeRelayId;
+  const latencyTarget = relayProfileLatencyTarget(profile);
+  const [latency, setLatency] = useState<{ status: "idle" | "loading" | "ok" | "failed"; latencyMs: number | null }>({
+    status: latencyTarget ? "loading" : "idle",
+    latencyMs: null,
+  });
+  const isNewapi = profileUsesNewapi(profile);
+  const [newapiRunning, setNewapiRunning] = useState(false);
+  const [newapiLoading, setNewapiLoading] = useState(false);
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
+  };
+
+  useEffect(() => {
+    if (!isNewapi) return;
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const status = await actions.newapiStatus();
+        if (mounted) setNewapiRunning(status.running);
+      } catch {
+        if (mounted) setNewapiRunning(false);
+      }
+    };
+    void refresh();
+    const interval = setInterval(refresh, 3000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [isNewapi, actions]);
+
+  const toggleNewapi = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setNewapiLoading(true);
+    try {
+      if (newapiRunning) {
+        const running = await actions.stopNewapi();
+        setNewapiRunning(running);
+      } else {
+        const running = await actions.startNewapi();
+        setNewapiRunning(running);
+        if (!running) {
+          void actions.showMessage(t("NEWAPI 启动失败"), t("无法启动 newapi 进程，请检查可执行文件是否存在。"), "failed");
+        }
+      }
+    } finally {
+      setNewapiLoading(false);
+    }
   };
 
   return (
@@ -3886,6 +3975,18 @@ function SortableRelayProfileCard({
           <CheckCircle2 className="h-4 w-4" />
           {active ? t("使用中") : t("使用")}
         </Button>
+        {isNewapi ? (
+          <Button
+            className="relay-newapi-button"
+            disabled={newapiLoading}
+            onClick={toggleNewapi}
+            size="sm"
+            title={newapiRunning ? t("停止 newapi 后台进程") : t("启动 newapi 后台进程")}
+            variant={newapiRunning ? "secondary" : "outline"}
+          >
+            {newapiRunning ? t("停止 NEWAPI") : t("启动 NEWAPI")}
+          </Button>
+        ) : null}
         <span className="relay-card-extra">
           <Button
             disabled={isAggregateRelayProfile(profile)}
@@ -6366,6 +6467,14 @@ function relayProfileSwitchCommand(profile: RelayProfile): "clear_relay_injectio
   if (profile.relayMode === "official" && !profile.officialMixApiKey) return "clear_relay_injection";
   if (profile.configContents.trim()) return "apply_relay_injection";
   return profile.officialMixApiKey ? "apply_relay_injection" : "clear_relay_injection";
+}
+
+function profileUsesNewapi(profile: RelayProfile): boolean {
+  return (
+    profile.id === "newapi" ||
+    profile.baseUrl === "http://localhost:3000/v1" ||
+    profile.upstreamBaseUrl === "http://localhost:3000/v1"
+  );
 }
 
 function withGeneratedRelayFiles(profile: RelayProfile): RelayProfile {
