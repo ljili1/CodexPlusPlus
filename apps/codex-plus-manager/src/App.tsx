@@ -6438,6 +6438,19 @@ function relayProfileModeHelp(profile: RelayProfile): string {
   return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex增强仍使用兼容模式。");
 }
 
+function relayProfileModeSwitchedText(profile: RelayProfile): string {
+  if (isAggregateRelayProfile(profile)) {
+    const aggregate = normalizeAggregateConfig(profile.aggregate, []);
+    return tf("已切换到聚合供应商 {0}，共 {1} 个成员，真实对话走本地代理轮转。", [
+      profile.name,
+      aggregate.members.length,
+    ]);
+  }
+  const modeLabel = relayModeLabel(profile.relayMode);
+  const brief = relayProfileConfigBrief(profile);
+  return tf("已切换到供应商 {0}（{1}，{2}）。", [profile.name, modeLabel, brief]);
+}
+
 function relayProfileReadinessText(profile: RelayProfile, relay: RelayResult | null): string {
   if (isAggregateRelayProfile(profile)) {
     const aggregate = normalizeAggregateConfig(profile.aggregate, []);
