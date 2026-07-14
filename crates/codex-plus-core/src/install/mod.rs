@@ -320,7 +320,6 @@ pub fn newapi_binary_path() -> PathBuf {
     // 不进入签名包）。
     companion_binary_path(NEWAPI_BINARY)
 }
-}
 
 pub fn companion_binary_path_from_exe(exe: &Path, binary: &str) -> PathBuf {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
