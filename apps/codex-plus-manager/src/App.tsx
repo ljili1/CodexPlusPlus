@@ -6422,6 +6422,15 @@ function relayProfileConfigBrief(profile: RelayProfile): string {
   return profile.baseUrl || t("未填写 URL");
 }
 
+function relayProfileLatencyTarget(profile: RelayProfile): string {
+  if (isAggregateRelayProfile(profile)) return "";
+  if (profile.relayMode === "official" && !profile.officialMixApiKey) return "";
+  if (profile.protocol === "chatCompletions") {
+    return (profile.upstreamBaseUrl || profile.baseUrl).trim();
+  }
+  return profile.baseUrl.trim();
+}
+
 function relayProfileModeHelp(profile: RelayProfile): string {
   if (isAggregateRelayProfile(profile)) {
     return t("聚合供应商只保存成员和策略配置，成员来自已有 API 供应商；切为当前后会通过本地协议代理轮转请求。");
