@@ -56,6 +56,7 @@ import {
   Star,
   Store,
   Stethoscope,
+  Monitor,
   Sun,
   TestTube,
   Trash2,
@@ -740,7 +741,7 @@ type StartupResult = CommandResult<{
 }>;
 
 type Route = "overview" | "relay" | "relayEnvironment" | "sessions" | "context" | "enhance" | "dreamSkin" | "zedRemote" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
-type Theme = "dark" | "light";
+type Theme = "dark" | "light" | "system";
 
 const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string }> = [
   { id: "overview", label: t("概览"), icon: LayoutDashboard },
@@ -2365,9 +2366,20 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    document.documentElement.classList.toggle("light", theme === "light");
-    window.localStorage.setItem("codex-plus-theme", theme);
+    const applyTheme = () => {
+      const resolved = resolveTheme(theme);
+      document.documentElement.classList.toggle("dark", resolved === "dark");
+      document.documentElement.classList.toggle("light", resolved === "light");
+      window.localStorage.setItem("codex-plus-theme", theme);
+    };
+    applyTheme();
+    if (theme === "system" && typeof window.matchMedia === "function") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => applyTheme();
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+    return undefined;
   }, [theme]);
 
   const saveCodexAppPath = async (appPath: string) => {
@@ -2636,7 +2648,8 @@ export function App() {
       uninstallWatcher: () => watcherAction("uninstall_watcher"),
       enableWatcher: () => watcherAction("enable_watcher"),
       disableWatcher: () => watcherAction("disable_watcher"),
-      toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      toggleTheme: () =>
+        setTheme((current) => (current === "dark" ? "light" : current === "light" ? "system" : "dark")),
     }),
     [route, launchForm, settingsForm, settings, overview, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, dreamSkinLibrary, dreamSkinMarket, selectedDreamSkinTheme, savedDreamSkinThemeDraft, dreamSkinThemeDraft, dreamSkinDraftDirty, pendingDreamSkinRestart],
   );
@@ -2705,10 +2718,22 @@ export function App() {
             <Button
               onClick={actions.toggleTheme}
               size="icon"
-              title={theme === "dark" ? t("切换到浅色") : t("切换到深色")}
+              title={
+                theme === "dark"
+                  ? t("切换到浅色")
+                  : theme === "light"
+                    ? t("切换到跟随系统")
+                    : t("切换到深色")
+              }
               variant="outline"
             >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : theme === "light" ? (
+                <Moon className="h-4 w-4" />
+              ) : (
+                <Monitor className="h-4 w-4" />
+              )}
             </Button>
             <Button onClick={() => void actions.restart()} title={t("重启 Codex++")} variant="outline">
               <Rocket className="h-4 w-4" />
@@ -2816,7 +2841,7 @@ export function App() {
             />
           ) : null}
           {route === "settings" ? (
-            <SettingsScreen settings={settings} theme={theme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
+            <SettingsScreen settings={settings} theme={theme} setTheme={setTheme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
           ) : null}
         </section>
       </main>
@@ -4975,12 +5000,14 @@ function AboutScreen({
 function SettingsScreen({
   settings,
   theme,
+  setTheme,
   form,
   onFormChange,
   actions,
 }: {
   settings: SettingsResult | null;
   theme: Theme;
+  setTheme: (value: Theme) => void;
   form: BackendSettings;
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
@@ -4993,9 +5020,35 @@ function SettingsScreen({
           <div className="theme-row">
             <div>
               <strong>{t("界面主题")}</strong>
-              <span>{t("当前为")}{theme === "dark" ? t("深色") : t("浅色")}{t("模式。")}</span>
+              <span>
+                {t("当前为")}
+                {theme === "system" ? t("跟随系统") : theme === "dark" ? t("深色") : t("浅色")}
+                {t("模式。")}
+              </span>
             </div>
-            <Button variant="secondary" onClick={actions.toggleTheme}>{t("切换主题")}</Button>
+            <div className="theme-segment">
+              <button
+                type="button"
+                className={theme === "dark" ? "active" : ""}
+                onClick={() => setTheme("dark")}
+              >
+                {t("深色")}
+              </button>
+              <button
+                type="button"
+                className={theme === "light" ? "active" : ""}
+                onClick={() => setTheme("light")}
+              >
+                {t("浅色")}
+              </button>
+              <button
+                type="button"
+                className={theme === "system" ? "active" : ""}
+                onClick={() => setTheme("system")}
+              >
+                {t("跟随系统")}
+              </button>
+            </div>
           </div>
           <Field label={t("供应商测试模型")}>
             <Input
@@ -8761,7 +8814,21 @@ function stringifyError(error: unknown) {
 
 function loadInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
-  return window.localStorage.getItem("codex-plus-theme") === "light" ? "light" : "dark";
+  const stored = window.localStorage.getItem("codex-plus-theme");
+  return stored === "light" || stored === "system" ? stored : "dark";
+}
+
+function systemPrefersDark(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+}
+
+function resolveTheme(theme: Theme): "dark" | "light" {
+  if (theme === "system") return systemPrefersDark() ? "dark" : "light";
+  return theme;
 }
 
 function loadInitialRoute(): Route {
