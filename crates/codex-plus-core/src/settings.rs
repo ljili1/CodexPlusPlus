@@ -332,6 +332,8 @@ pub struct BackendSettings {
     pub provider_sync_last_selected_provider: String,
     #[serde(rename = "relayProfilesEnabled", default = "default_true")]
     pub relay_profiles_enabled: bool,
+    #[serde(rename = "universalModelCatalogEnabled", default = "default_true")]
+    pub universal_model_catalog_enabled: bool,
     #[serde(rename = "enhancementsEnabled", default = "default_true")]
     pub enhancements_enabled: bool,
     #[serde(rename = "computerUseGuardEnabled", default)]
@@ -482,6 +484,7 @@ impl Default for BackendSettings {
             provider_sync_manual_providers: Vec::new(),
             provider_sync_last_selected_provider: String::new(),
             relay_profiles_enabled: true,
+            universal_model_catalog_enabled: true,
             enhancements_enabled: true,
             computer_use_guard_enabled: false,
             codex_app_plugin_marketplace_unlock: true,

@@ -129,6 +129,7 @@ async fn model_catalog_uses_active_relay_profile_model_list_for_display() {
         SettingsStore::new(settings_path)
             .save(&BackendSettings {
                 active_relay_id: "relay-a".to_string(),
+                universal_model_catalog_enabled: false,
                 relay_profiles: vec![RelayProfile {
                     id: "relay-a".to_string(),
                     name: "Relay A".to_string(),
@@ -186,6 +187,77 @@ async fn model_catalog_uses_active_relay_profile_model_list_for_display() {
         ["low", "medium", "high", "xhigh", "max", "ultra"]
     );
     assert_eq!(result["sources"][0]["type"], "relay_profile_model_list");
+}
+
+#[tokio::test]
+async fn model_catalog_merges_all_providers_with_prefix_when_universal_enabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let codex_home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    let settings_path = temp.path().join("settings.json");
+    let previous_codex_home = std::env::var_os("CODEX_HOME");
+    let previous_settings_path =
+        codex_plus_core::paths::set_settings_path_for_tests(Some(settings_path.clone()));
+    unsafe {
+        std::env::set_var("CODEX_HOME", &codex_home);
+    }
+
+    let result = async {
+        SettingsStore::new(settings_path)
+            .save(&BackendSettings {
+                active_relay_id: "relay-a".to_string(),
+                universal_model_catalog_enabled: true,
+                relay_profiles: vec![
+                    RelayProfile {
+                        id: "relay-a".to_string(),
+                        name: "Relay A".to_string(),
+                        model: "qwen3-coder".to_string(),
+                        base_url: "https://a.test/v1".to_string(),
+                        protocol: RelayProtocol::Responses,
+                        relay_mode: RelayMode::MixedApi,
+                        model_list: "qwen3-coder\ndeepseek-coder".to_string(),
+                        ..RelayProfile::default()
+                    },
+                    RelayProfile {
+                        id: "relay-b".to_string(),
+                        name: "Relay B".to_string(),
+                        model: "gpt-5".to_string(),
+                        base_url: "https://b.test/v1".to_string(),
+                        protocol: RelayProtocol::Responses,
+                        relay_mode: RelayMode::MixedApi,
+                        model_list: "gpt-5".to_string(),
+                        ..RelayProfile::default()
+                    },
+                ],
+                ..BackendSettings::default()
+            })
+            .unwrap();
+
+        read_codex_model_catalog().await
+    }
+    .await;
+
+    match previous_codex_home {
+        Some(value) => unsafe {
+            std::env::set_var("CODEX_HOME", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CODEX_HOME");
+        },
+    }
+    codex_plus_core::paths::set_settings_path_for_tests(previous_settings_path);
+
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["model_provider"], "");
+    let models = result["models"].as_array().expect("models array");
+    let ids: Vec<&str> = models.iter().filter_map(|value| value.as_str()).collect();
+    assert!(ids.contains(&"Relay A/qwen3-coder"), "missing Relay A prefix: {ids:?}");
+    assert!(ids.contains(&"Relay A/deepseek-coder"), "missing Relay A prefix: {ids:?}");
+    assert!(ids.contains(&"Relay B/gpt-5"), "missing Relay B prefix: {ids:?}");
+    assert_eq!(result["default_model"], "Relay A/qwen3-coder");
+    let sources = result["sources"].as_array().expect("sources array");
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[0]["type"], "relay_profile_model_list");
 }
 
 #[tokio::test]

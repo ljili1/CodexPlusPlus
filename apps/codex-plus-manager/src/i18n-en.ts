@@ -639,6 +639,8 @@ export const EN_PLAIN: Record<string, string> = {
   "消息": "Message",
   "深色": "Dark",
   "跟随系统": "Follow system",
+  "统一模型目录": "Unified model catalog",
+  "开启后把所有已配置供应商的模型合并到同一模型目录，并以供应商显示名称作为前缀（如「我的供应商/gpt-5」）。": "When enabled, all configured providers' models are merged into one model catalog, prefixed by the provider display name (e.g. \"My Provider/gpt-5\").",
   "混入 API": "Mixed-in API",
   "混入 API KEY": "Mix in API KEY",
   "混入 API Key": "Mix in API Key",
