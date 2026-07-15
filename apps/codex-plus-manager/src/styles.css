@@ -923,6 +923,10 @@ body {
   min-width: 76px;
 }
 
+.relay-newapi-button {
+  min-width: 96px;
+}
+
 .relay-card-extra {
   display: inline-flex;
   gap: 6px;
@@ -1853,6 +1857,87 @@ body {
   margin-top: 0;
 }
 
+.aggregate-prefixed-catalog-row {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.4);
+}
+
+.toggle-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.toggle-row input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: hsl(var(--muted));
+  border-radius: 24px;
+  transition: background-color 0.2s ease;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: hsl(var(--background));
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: hsl(var(--primary));
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+
+.toggle-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toggle-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+}
+
 .metric-list div,
 .table-row {
   display: grid;
@@ -1933,6 +2018,40 @@ body {
 .theme-row:hover {
   border-color: hsl(var(--primary) / 0.32);
   background: hsl(var(--accent) / 0.55);
+}
+
+.theme-segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.7);
+  border: 1px solid hsl(var(--border));
+}
+
+.theme-seg {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  transition:
+    background-color var(--motion-normal) var(--motion-ease),
+    color var(--motion-normal) var(--motion-ease);
+}
+
+.theme-seg:hover {
+  color: hsl(var(--foreground));
+}
+
+.theme-seg.active {
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
 }
 
 .feature-item,
@@ -2753,6 +2872,31 @@ body {
 
 .session-meta {
   justify-items: end;
+}
+
+.session-relay-binding {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  align-self: center;
+}
+
+.session-relay-binding > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-relay-select {
+  max-width: 160px;
+}
+
+.aggregate-manual-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .script-market-card {
@@ -4117,4 +4261,91 @@ select {
   .jojocode-model-tags {
     justify-content: flex-start;
   }
+}
+
+/* 聚合供应商（全局模型目录） */
+.universal-catalog-section {
+  margin: 14px 0;
+}
+
+.universal-catalog-switch {
+  margin-bottom: 12px;
+}
+
+.universal-catalog-section .aggregate-catalog-summary {
+  padding: 0 4px;
+  margin-bottom: 14px;
+}
+
+.aggregate-catalog-summary {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 14px;
+}
+
+.aggregate-catalog-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  border: 1px dashed hsl(var(--border));
+  border-radius: 10px;
+}
+
+.aggregate-catalog-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.aggregate-catalog-group {
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.2);
+  padding: 12px;
+}
+
+.aggregate-catalog-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.aggregate-catalog-group-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.aggregate-catalog-group-count {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.aggregate-catalog-group-empty {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  padding: 8px 0;
+}
+
+.aggregate-catalog-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aggregate-catalog-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  font-size: 12px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: hsl(var(--foreground));
 }

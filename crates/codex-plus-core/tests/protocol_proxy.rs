@@ -1486,6 +1486,8 @@ fn aggregate_proxy_settings(
                     weight: 1,
                 },
             ],
+            active_member_relay_id: String::new(),
+            model: String::new(),
         }],
         ..BackendSettings::default()
     }

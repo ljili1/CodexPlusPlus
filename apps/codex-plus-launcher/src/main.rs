@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
         let _ = notify_manager_when_update_available().await;
     });
     let hooks = LauncherHooks::default();
+
     let handle = launch_and_inject_with_hooks(options, &hooks).await?;
     handle.wait_for_codex_exit().await?;
     Ok(())

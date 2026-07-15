@@ -108,6 +108,7 @@ pub fn run() {
             commands::diagnose_relay_profile,
             commands::test_stepwise_settings,
             commands::fetch_relay_profile_models,
+            commands::read_aggregate_model_catalog,
             commands::switch_relay_profile,
             commands::apply_relay_injection,
             commands::apply_pure_api_injection,

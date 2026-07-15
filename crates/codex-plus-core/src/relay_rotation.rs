@@ -57,12 +57,17 @@ impl std::error::Error for SelectionError {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RotationContext {
     pub conversation_id: Option<String>,
+    /// 手动覆盖：优先于任何策略，直接路由到指定成员 `relay_id`（需为聚合成员）。
+    pub override_relay_id: Option<String>,
+    /// 手动覆盖：优先于成员默认模型，强制使用指定模型。
+    pub override_model: Option<String>,
 }
 
 impl RotationContext {
     pub fn for_conversation(conversation_id: impl Into<String>) -> Self {
         Self {
             conversation_id: Some(conversation_id.into()),
+            ..Self::default()
         }
     }
 }
@@ -103,18 +108,37 @@ impl RelayRotationSelector {
         context: RotationContext,
     ) -> Result<RelayProfile, SelectionError> {
         validate_aggregate_members(settings, &self.aggregate)?;
-        let relay_id = match self.aggregate.strategy {
-            AggregateRelayStrategy::Failover => self.member_id_at(self.failover_index),
-            AggregateRelayStrategy::ConversationRoundRobin => {
-                self.select_for_conversation(context.conversation_id)
+        // 手动覆盖优先于任何策略；非法成员直接报错。
+        let relay_id = if let Some(relay_id) = context.override_relay_id.clone() {
+            if !self.is_member(&relay_id) {
+                return Err(SelectionError::UnknownMemberRelay {
+                    aggregate_id: self.aggregate.id.clone(),
+                    relay_id,
+                });
             }
-            AggregateRelayStrategy::RequestRoundRobin => self.select_next_request(),
-            AggregateRelayStrategy::WeightedRoundRobin => self.select_next_weighted(),
+            relay_id
+        } else {
+            match self.aggregate.strategy {
+                AggregateRelayStrategy::Failover => self.member_id_at(self.failover_index),
+                AggregateRelayStrategy::ConversationRoundRobin => {
+                    self.select_for_conversation(context.conversation_id)
+                }
+                AggregateRelayStrategy::RequestRoundRobin => self.select_next_request(),
+                AggregateRelayStrategy::WeightedRoundRobin => self.select_next_weighted(),
+                AggregateRelayStrategy::Manual => self.manual_member_id(),
+            }
         };
-        relay_profile_by_id(settings, &relay_id).ok_or_else(|| SelectionError::UnknownMemberRelay {
-            aggregate_id: self.aggregate.id.clone(),
-            relay_id,
-        })
+        let mut profile = relay_profile_by_id(settings, &relay_id)
+            .ok_or_else(|| SelectionError::UnknownMemberRelay {
+                aggregate_id: self.aggregate.id.clone(),
+                relay_id,
+            })?;
+        if let Some(model) = context.override_model.clone().filter(|m| !m.trim().is_empty()) {
+            profile.model = model;
+        } else if !self.aggregate.model.trim().is_empty() {
+            profile.model = self.aggregate.model.clone();
+        }
+        Ok(profile)
     }
 
     pub fn peek(&self, settings: &BackendSettings) -> Result<RelayProfile, SelectionError> {
@@ -127,6 +151,7 @@ impl RelayRotationSelector {
                 let schedule = self.weighted_schedule();
                 schedule[self.weighted_index % schedule.len()].clone()
             }
+            AggregateRelayStrategy::Manual => self.manual_member_id(),
         };
         relay_profile_by_id(settings, &relay_id).ok_or_else(|| SelectionError::UnknownMemberRelay {
             aggregate_id: self.aggregate.id.clone(),
@@ -185,6 +210,23 @@ impl RelayRotationSelector {
             .relay_id
             .clone()
     }
+
+    /// `Manual` 策略使用的固定成员：优先 `active_member_relay_id`，非法或为空时退回第一个成员。
+    fn manual_member_id(&self) -> String {
+        let chosen = self.aggregate.active_member_relay_id.trim();
+        if !chosen.is_empty() && self.is_member(chosen) {
+            chosen.to_string()
+        } else {
+            self.member_id_at(0)
+        }
+    }
+
+    fn is_member(&self, relay_id: &str) -> bool {
+        self.aggregate
+            .members
+            .iter()
+            .any(|member| member.relay_id == relay_id)
+    }
 }
 
 pub fn select_relay_for_request(
@@ -204,6 +246,16 @@ pub fn select_relay_for_request(
         .unwrap_or(true);
     if needs_new_selector {
         *guard = Some(RelayRotationSelector::from_settings(settings)?);
+    }
+    // 逐对话绑定覆盖：conversation_id -> 成员 relay_id，优先于轮转策略。
+    // 仅在调用方未通过模型前缀显式指定成员时才应用（模型前缀优先级最高）。
+    let mut context = context;
+    if context.override_relay_id.is_none() {
+        if let Some(conversation_id) = context.conversation_id.clone() {
+            if let Some(relay_id) = settings.conversation_relay_overrides.get(&conversation_id) {
+                context.override_relay_id = Some(relay_id.clone());
+            }
+        }
     }
     guard
         .as_mut()
@@ -332,4 +384,77 @@ fn relay_profile_by_id(settings: &BackendSettings, relay_id: &str) -> Option<Rel
         .iter()
         .find(|profile| profile.id == relay_id)
         .cloned()
+}
+
+/// 聚合模型目录使用的供应商前缀：优先使用成员配置名称（display name），
+/// 名称为空时回退到 relay id。调用方需同时传入名称与 id，以便回退。
+pub fn member_model_prefix(name: &str, relay_id: &str) -> String {
+    let candidate = name.trim();
+    if candidate.is_empty() {
+        relay_id.trim().to_string()
+    } else {
+        candidate.to_string()
+    }
+}
+
+/// 解析形如 `prefix/model` 的请求模型：
+/// - 当聚合已激活且前缀路由开关开启时，候选为聚合成员；
+/// - 当全局聚合开关（`universal_model_catalog_enabled`）开启时，候选为【所有】已配置供应商，
+///   无需创建聚合供应商；
+/// - 若 `prefix` 精确（或大小写不敏感）命中某个候选供应商的 **配置名称** 或 **relay id**，
+///   返回 `(供应商 relay_id, 去掉前缀后的裸模型名)`，供上游按裸模型名请求。
+///
+/// 两个开关都关闭、无 `/` 分隔或前缀未命中任何候选时返回 `None`，
+/// 由调用方回退到原有的轮转/故障转移策略。
+pub fn resolve_prefixed_model(settings: &BackendSettings, model: &str) -> Option<(String, String)> {
+    let (prefix, rest) = model.split_once('/')?;
+    let prefix = prefix.trim();
+    let rest = rest.trim();
+    if prefix.is_empty() || rest.is_empty() {
+        return None;
+    }
+
+    // 收集候选供应商：全局聚合（universal）优先，表示「所有」已配置供应商，
+    // 无需聚合供应商；否则若聚合前缀开关开启且存在激活聚合，则使用聚合成员。
+    let candidates: Vec<RelayProfile> = if settings.universal_model_catalog_enabled {
+        settings.relay_profiles.clone()
+    } else if settings.aggregate_prefixed_catalog_enabled {
+        match settings.active_aggregate_relay_profile() {
+            Some(aggregate) => aggregate
+                .members
+                .iter()
+                .filter_map(|member| {
+                    settings
+                        .relay_profiles
+                        .iter()
+                        .find(|profile| profile.id == member.relay_id)
+                        .cloned()
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    } else {
+        return None;
+    };
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let find_match = |case_insensitive: bool| -> Option<String> {
+        candidates
+            .iter()
+            .find(|profile| {
+                let name_prefix = member_model_prefix(&profile.name, &profile.id);
+                if case_insensitive {
+                    name_prefix.eq_ignore_ascii_case(prefix) || profile.id.eq_ignore_ascii_case(prefix)
+                } else {
+                    name_prefix == prefix || profile.id == prefix
+                }
+            })
+            .map(|profile| profile.id.clone())
+    };
+
+    find_match(false)
+        .or_else(|| find_match(true))
+        .map(|relay_id| (relay_id, rest.to_string()))
 }

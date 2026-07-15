@@ -55,7 +55,7 @@ import {
 } from "lucide-react";
 import { ProviderPresetSelector } from "@/components/ProviderPresetSelector";
 import type { PresetPatch } from "@/components/ProviderPresetSelector";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { Badge as UiBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -183,6 +183,9 @@ type BackendSettings = {
   relayProfiles: RelayProfile[];
   aggregateRelayProfiles: AggregateRelayProfile[];
   activeAggregateRelayId: string;
+  conversationRelayOverrides: Record<string, string>;
+  aggregatePrefixedCatalogEnabled: boolean;
+  universalModelCatalogEnabled: boolean;
   relayCommonConfigContents: string;
   relayContextConfigContents: string;
   activeRelayId: string;
@@ -217,7 +220,7 @@ export type RelayProfile = {
   aggregate?: RelayAggregateConfig | null;
 };
 
-type RelayAggregateStrategy = "failover" | "conversationRoundRobin" | "requestRoundRobin" | "weightedRoundRobin";
+type RelayAggregateStrategy = "failover" | "conversationRoundRobin" | "requestRoundRobin" | "weightedRoundRobin" | "manual";
 type RelayAggregateMember = {
   profileId: string;
   weight: number;
@@ -225,6 +228,8 @@ type RelayAggregateMember = {
 type RelayAggregateConfig = {
   strategy: RelayAggregateStrategy;
   members: RelayAggregateMember[];
+  activeMemberRelayId?: string;
+  model?: string;
 };
 type AggregateRelayMember = {
   relayId: string;
@@ -235,6 +240,8 @@ type AggregateRelayProfile = {
   name: string;
   strategy: RelayAggregateStrategy;
   members: AggregateRelayMember[];
+  activeMemberRelayId?: string;
+  model?: string;
 };
 
 type RelayContextSelection = {
@@ -404,6 +411,12 @@ type StepwiseTestResult = CommandResult<{
 type RelayProfileModelsResult = CommandResult<{
   models: string[];
   endpoint: string;
+}>;
+
+type AggregateModelCatalogResult = CommandResult<{
+  status: string;
+  models: string[];
+  sources: unknown[];
 }>;
 
 type ProviderDoctorCheck = {
@@ -655,7 +668,7 @@ type StartupResult = CommandResult<{
 }>;
 
 type Route = "overview" | "relay" | "relayEnvironment" | "sessions" | "context" | "enhance" | "zedRemote" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
-type Theme = "dark" | "light";
+type Theme = "dark" | "light" | "system";
 
 const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string }> = [
   { id: "overview", label: t("概览"), icon: LayoutDashboard },
@@ -750,6 +763,9 @@ const defaultSettings: BackendSettings = {
   activeRelayId: "default",
   aggregateRelayProfiles: [],
   activeAggregateRelayId: "",
+  conversationRelayOverrides: {},
+  aggregatePrefixedCatalogEnabled: true,
+  universalModelCatalogEnabled: false,
   relayTestModel: "gpt-5.4-mini",
 };
 
@@ -1681,6 +1697,14 @@ export function App() {
     return result && isSuccessStatus(result.status) ? result.models : null;
   };
 
+  const readAggregateModelCatalog = async () => {
+    const result = await run(() => call<AggregateModelCatalogResult>("read_aggregate_model_catalog", {}));
+    if (result && isSuccessStatus(result.status)) {
+      return result.models;
+    }
+    return null;
+  };
+
   const switchOfficialMode = async () => {
     const switched = await clearRelayInjection(true);
     if (!switched) return;
@@ -1777,6 +1801,7 @@ export function App() {
         launchMode: selectedSettings.launchMode,
         status: result.status,
       });
+      showNotice(t("供应商切换"), relayProfileModeSwitchedText(currentSelected), result.status);
     } finally {
       setRelaySwitching(false);
     }
@@ -1875,9 +1900,22 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    document.documentElement.classList.toggle("light", theme === "light");
+    const applyTheme = () => {
+      const effective = resolveEffectiveTheme(theme);
+      document.documentElement.classList.toggle("dark", effective === "dark");
+      document.documentElement.classList.toggle("light", effective === "light");
+      document.documentElement.style.colorScheme = effective;
+    };
+    applyTheme();
     window.localStorage.setItem("codex-plus-theme", theme);
+    // 跟随系统：监听系统主题变化并实时切换。
+    if (theme !== "system" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
   }, [theme]);
 
   const saveCodexAppPath = async (appPath: string) => {
@@ -2023,6 +2061,7 @@ export function App() {
       diagnoseRelayProfile,
       testStepwiseSettings,
       fetchRelayProfileModels,
+      readAggregateModelCatalog,
       switchRelayProfile,
       relaySwitching,
       switchOfficialMode,
@@ -2044,6 +2083,7 @@ export function App() {
       enableWatcher: () => watcherAction("enable_watcher"),
       disableWatcher: () => watcherAction("disable_watcher"),
       toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      setTheme: (next: Theme) => setTheme(next),
     }),
     [route, launchForm, settingsForm, settings, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders],
   );
@@ -2304,6 +2344,7 @@ type Actions = {
   diagnoseRelayProfile: (profile: RelayProfile) => Promise<ProviderDoctorResult | null>;
   testStepwiseSettings: (settings: BackendSettings) => Promise<void>;
   fetchRelayProfileModels: (profile: RelayProfile) => Promise<string[] | null>;
+  readAggregateModelCatalog: () => Promise<string[] | null>;
   switchRelayProfile: (settings: BackendSettings, previousActiveRelayId?: string) => Promise<void>;
   relaySwitching: boolean;
   switchOfficialMode: () => Promise<void>;
@@ -2319,6 +2360,7 @@ type Actions = {
   enableWatcher: () => Promise<void>;
   disableWatcher: () => Promise<void>;
   toggleTheme: () => void;
+  setTheme: (next: Theme) => void;
   checkHealth: () => Promise<void>;
 };
 
@@ -2604,6 +2646,7 @@ function RelayScreen({
             </span>
             <ToggleVisual />
           </label>
+          <UniversalCatalogToggle form={normalized} onFormChange={saveRelaySettings} />
           <div className="relay-add-row">
             <Button
               variant="secondary"
@@ -2664,6 +2707,59 @@ function RelayScreen({
         </CardContent>
       </Panel>
     </>
+  );
+}
+
+function UniversalCatalogToggle({
+  form,
+  onFormChange,
+}: {
+  form: BackendSettings;
+  onFormChange: (value: BackendSettings) => void;
+}) {
+  const enabled = form.universalModelCatalogEnabled !== false;
+
+  const groups = useMemo(() => {
+    return form.relayProfiles.map((profile) => {
+      const models = profile.modelList
+        .split(/[\r\n,]+/)
+        .map((model) => model.trim())
+        .filter(Boolean);
+      const seen = new Set(models);
+      if (profile.model.trim() && !seen.has(profile.model.trim())) {
+        models.push(profile.model.trim());
+      }
+      const prefix = (profile.name || profile.id).trim();
+      return {
+        profile,
+        prefix,
+        models: models.map((model) => (enabled ? `${prefix}/${model}` : model)),
+      };
+    });
+  }, [form.relayProfiles, enabled]);
+
+  const totalModels = groups.reduce((sum, group) => sum + group.models.length, 0);
+
+  return (
+    <div className="universal-catalog-section">
+      <label className="switch-row universal-catalog-switch">
+        <input
+          checked={enabled}
+          onChange={(event) =>
+            onFormChange({ ...form, universalModelCatalogEnabled: event.currentTarget.checked })
+          }
+          type="checkbox"
+        />
+        <span>
+          <strong>{t("聚合供应商")}</strong>
+          <small>{t("开启后所有供应商模型合并为同一个目录，Codex 主界面直接展示（如 NEWAPI/gpt-5），无需创建聚合供应商；按前缀自动路由到对应供应商。")}</small>
+        </span>
+        <ToggleVisual />
+      </label>
+      <div className="aggregate-catalog-summary">
+        {tf("共 {0} 个供应商，{1} 个模型", [groups.length, totalModels])}
+      </div>
+    </div>
   );
 }
 
@@ -3106,6 +3202,24 @@ function SessionsScreen({
   const selectedCount = selectedSessions.length;
   const allSelected = items.length > 0 && selectedCount === items.length;
 
+  const relayCandidates = useMemo(() => aggregateMemberCandidates(form, ""), [form]);
+  const activeAggregate = form.activeAggregateRelayId
+    ? form.relayProfiles.find(
+        (profile) => profile.id === form.activeAggregateRelayId && isAggregateRelayProfile(profile),
+      )
+    : undefined;
+  const conversationRelayOverrides = form.conversationRelayOverrides ?? {};
+
+  const setConversationRelay = (sessionId: string, relayId: string) => {
+    const nextOverrides: Record<string, string> = { ...conversationRelayOverrides };
+    if (relayId) {
+      nextOverrides[sessionId] = relayId;
+    } else {
+      delete nextOverrides[sessionId];
+    }
+    void actions.saveSettingsValue({ ...form, conversationRelayOverrides: nextOverrides }, true);
+  };
+
   useEffect(() => {
     const itemIds = new Set(items.map((session) => session.id));
     setSelectedSessionIds((current) => {
@@ -3266,6 +3380,23 @@ function SessionsScreen({
                         <span>{session.modelProvider || t("provider 未记录")}</span>
                         <span>{formatTime(session.updatedAtMs ?? 0)}</span>
                       </div>
+                      {activeAggregate ? (
+                        <div className="session-relay-binding" title={t("为该对话固定使用某个聚合成员供应商，优先于轮转策略")}>
+                          <span>{t("供应商")}</span>
+                          <select
+                            className="field-select session-relay-select"
+                            value={conversationRelayOverrides[session.id] ?? ""}
+                            onChange={(event) => setConversationRelay(session.id, event.currentTarget.value)}
+                          >
+                            <option value="">{t("轮转（默认）")}</option>
+                            {relayCandidates.map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {candidate.name || t("未命名供应商")}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
                       <Button className="session-delete-button" variant="outline" onClick={() => void actions.deleteLocalSession(session)}>
                         <Trash2 className="h-4 w-4" />
                         {t("删除")}
@@ -3531,9 +3662,31 @@ function SettingsScreen({
           <div className="theme-row">
             <div>
               <strong>{t("界面主题")}</strong>
-              <span>{t("当前为")}{theme === "dark" ? t("深色") : t("浅色")}{t("模式。")}</span>
+              <span>{t("当前为")}{resolveEffectiveTheme(theme) === "dark" ? t("深色") : t("浅色")}{t("模式。")}</span>
             </div>
-            <Button variant="secondary" onClick={actions.toggleTheme}>{t("切换主题")}</Button>
+            <div className="theme-segmented" role="group" aria-label={t("界面主题")}>
+              <button
+                type="button"
+                className={theme === "dark" ? "theme-seg active" : "theme-seg"}
+                onClick={() => actions.setTheme("dark")}
+              >
+                {t("深色")}
+              </button>
+              <button
+                type="button"
+                className={theme === "light" ? "theme-seg active" : "theme-seg"}
+                onClick={() => actions.setTheme("light")}
+              >
+                {t("浅色")}
+              </button>
+              <button
+                type="button"
+                className={theme === "system" ? "theme-seg active" : "theme-seg"}
+                onClick={() => actions.setTheme("system")}
+              >
+                {t("跟随系统")}
+              </button>
+            </div>
           </div>
           <Field label={t("供应商测试模型")}>
             <Input
@@ -3834,6 +3987,11 @@ function SortableRelayProfileCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: profile.id });
   const active = profile.id === form.activeRelayId;
+  const latencyTarget = relayProfileLatencyTarget(profile);
+  const [latency, setLatency] = useState<{ status: "idle" | "loading" | "ok" | "failed"; latencyMs: number | null }>({
+    status: latencyTarget ? "loading" : "idle",
+    latencyMs: null,
+  });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -4081,7 +4239,7 @@ function RelayProfileDetail({
           </Button>
         </Toolbar>
       </div>
-        <RelayProfileEditor profile={draft} form={form} isNew={isNew} onProfileChange={setDraft} onSwitch={switchDraft} actions={actions} modelWindowRows={modelWindowRows} setModelWindowRows={setModelWindowRows} />
+        <RelayProfileEditor profile={draft} form={form} isNew={isNew} onProfileChange={setDraft} onFormChange={onFormChange} onSwitch={switchDraft} actions={actions} modelWindowRows={modelWindowRows} setModelWindowRows={setModelWindowRows} />
       {isAggregateRelayProfile(draft) ? null : (
       <RelayFileEditors
         contextProfile={profile}
@@ -4132,6 +4290,7 @@ function RelayProfileEditor({
   form,
   isNew = false,
   onProfileChange,
+  onFormChange,
   onSwitch,
   actions,
   modelWindowRows,
@@ -4141,6 +4300,7 @@ function RelayProfileEditor({
   form: BackendSettings;
   isNew?: boolean;
   onProfileChange: (value: RelayProfile) => void;
+  onFormChange: (value: BackendSettings) => void;
   onSwitch: () => void;
   actions: Actions;
   modelWindowRows: ModelWindowRow[];
@@ -4157,6 +4317,7 @@ function RelayProfileEditor({
         form={form}
         isNew={isNew}
         onProfileChange={onProfileChange}
+        onFormChange={onFormChange}
       />
     );
   }
@@ -4470,17 +4631,26 @@ function AggregateRelayProfileEditor({
   form,
   isNew = false,
   onProfileChange,
+  onFormChange,
 }: {
   profile: RelayProfile;
   form: BackendSettings;
   isNew?: boolean;
   onProfileChange: (value: RelayProfile) => void;
+  onFormChange: (value: BackendSettings) => void;
 }) {
   const candidates = aggregateMemberCandidates(form, profile.id);
   const aggregate = normalizeAggregateConfig(profile.aggregate, candidates);
   const memberIds = new Set(aggregate.members.map((member) => member.profileId));
   const updateAggregate = (nextAggregate: RelayAggregateConfig) => {
     onProfileChange(normalizeAggregateRelayProfile({ ...profile, aggregate: nextAggregate }, form));
+  };
+  const changeStrategy = (strategy: RelayAggregateStrategy) => {
+    const next: RelayAggregateConfig = { ...aggregate, strategy };
+    if (strategy === "manual" && !next.activeMemberRelayId && candidates.length) {
+      next.activeMemberRelayId = candidates[0].id;
+    }
+    updateAggregate(next);
   };
   const toggleMember = (profileId: string, checked: boolean) => {
     const members = checked
@@ -4526,7 +4696,7 @@ function AggregateRelayProfileEditor({
           <select
             className="field-select"
             value={aggregate.strategy}
-            onChange={(event) => updateAggregate({ ...aggregate, strategy: event.currentTarget.value as RelayAggregateStrategy })}
+            onChange={(event) => changeStrategy(event.currentTarget.value as RelayAggregateStrategy)}
           >
             {aggregateStrategyOptions.map((option) => (
               <option key={option.value} value={option.value}>
@@ -4541,7 +4711,7 @@ function AggregateRelayProfileEditor({
           <button
             className={`mode-option aggregate-strategy-option ${aggregate.strategy === option.value ? "active" : ""}`}
             key={option.value}
-            onClick={() => updateAggregate({ ...aggregate, strategy: option.value })}
+            onClick={() => changeStrategy(option.value)}
             type="button"
           >
             <strong>{option.label}</strong>
@@ -4591,6 +4761,33 @@ function AggregateRelayProfileEditor({
           <div className="empty">{t("先添加至少 1 个已填写 Base URL / Key 的 API 供应商，再创建聚合供应商。")}</div>
         )}
       </div>
+      {aggregate.strategy === "manual" ? (
+        <div className="aggregate-manual-fields">
+          <Field className="aggregate-manual-member-field" label={t("固定成员供应商")}>
+            <select
+              className="field-select"
+              value={aggregate.activeMemberRelayId ?? ""}
+              onChange={(event) =>
+                updateAggregate({ ...aggregate, activeMemberRelayId: event.currentTarget.value })
+              }
+            >
+              <option value="">{t("请选择成员")}</option>
+              {candidates.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name || t("未命名供应商")}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field className="aggregate-manual-model-field" label={t("固定模型（可选）")}>
+            <Input
+              value={aggregate.model ?? ""}
+              onChange={(event) => updateAggregate({ ...aggregate, model: event.currentTarget.value })}
+              placeholder={t("留空沿用成员模型目录")}
+            />
+          </Field>
+        </div>
+      ) : null}
       <div className="relay-grid compact aggregate-preview">
         <Metric label={t("策略")} value={aggregateStrategyLabel(aggregate.strategy)} />
         <Metric label={t("成员数量")} value={tf("{0} 个", [aggregate.members.length])} />
@@ -4600,6 +4797,24 @@ function AggregateRelayProfileEditor({
       <div className="hint-line relay-protocol-hint">
         <ShieldCheck className="h-4 w-4" />
         <span>{aggregateStrategyHelp(aggregate.strategy)}</span>
+      </div>
+      <div className="aggregate-prefixed-catalog-row">
+        <label className="toggle-row">
+          <span className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={form.aggregatePrefixedCatalogEnabled !== false}
+              onChange={(event) =>
+                onFormChange({ ...form, aggregatePrefixedCatalogEnabled: event.currentTarget.checked })
+              }
+            />
+            <span className="toggle-slider" />
+          </span>
+          <span>
+            <strong>{t("合并模型目录")}</strong>
+            <span className="toggle-desc">{t("聚合激活时把各成员模型合并为一个目录，并加供应商前缀（如 NEWAPI/gpt-5），按前缀直接路由到对应成员。")}</span>
+          </span>
+        </label>
       </div>
     </div>
   );
@@ -6133,6 +6348,8 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     ...defaultSettings,
     ...settings,
     relayProfilesEnabled: settings.relayProfilesEnabled !== false,
+    aggregatePrefixedCatalogEnabled: settings.aggregatePrefixedCatalogEnabled !== false,
+    universalModelCatalogEnabled: settings.universalModelCatalogEnabled === true,
     computerUseGuardEnabled: settings.computerUseGuardEnabled === true,
     codexAppImageOverlayOpacity: clampNumber(settings.codexAppImageOverlayOpacity || 35, 1, 100),
     codexAppImageOverlayFitMode: normalizeImageOverlayFitMode(settings.codexAppImageOverlayFitMode),
@@ -6321,6 +6538,15 @@ function relayProfileConfigBrief(profile: RelayProfile): string {
   return profile.baseUrl || t("未填写 URL");
 }
 
+function relayProfileLatencyTarget(profile: RelayProfile): string {
+  if (isAggregateRelayProfile(profile)) return "";
+  if (profile.relayMode === "official" && !profile.officialMixApiKey) return "";
+  if (profile.protocol === "chatCompletions") {
+    return (profile.upstreamBaseUrl || profile.baseUrl).trim();
+  }
+  return profile.baseUrl.trim();
+}
+
 function relayProfileModeHelp(profile: RelayProfile): string {
   if (isAggregateRelayProfile(profile)) {
     return t("聚合供应商只保存成员和策略配置，成员来自已有 API 供应商；切为当前后会通过本地协议代理轮转请求。");
@@ -6335,6 +6561,19 @@ function relayProfileModeHelp(profile: RelayProfile): string {
     return t("此供应商会同时写入 config.toml 和 auth.json；API Key 也会注入到 provider bearer token。");
   }
   return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex增强仍使用兼容模式。");
+}
+
+function relayProfileModeSwitchedText(profile: RelayProfile): string {
+  if (isAggregateRelayProfile(profile)) {
+    const aggregate = normalizeAggregateConfig(profile.aggregate, []);
+    return tf("已切换到聚合供应商 {0}，共 {1} 个成员，真实对话走本地代理轮转。", [
+      profile.name,
+      aggregate.members.length,
+    ]);
+  }
+  const modeLabel = relayModeLabel(profile.relayMode);
+  const brief = relayProfileConfigBrief(profile);
+  return tf("已切换到供应商 {0}（{1}，{2}）。", [profile.name, modeLabel, brief]);
 }
 
 function relayProfileReadinessText(profile: RelayProfile, relay: RelayResult | null): string {
@@ -6804,6 +7043,8 @@ function normalizeAggregateProfilesFromRelayProfiles(profiles: RelayProfile[]): 
         relayId: member.profileId,
         weight: clampAggregateWeight(member.weight),
       })),
+      activeMemberRelayId: aggregate.activeMemberRelayId,
+      model: aggregate.model,
     };
   });
 }
@@ -6980,6 +7221,11 @@ const aggregateStrategyOptions: Array<{ value: RelayAggregateStrategy; label: st
     label: t("权重轮转"),
     description: t("按成员权重分配请求，权重越高承担越多。"),
   },
+  {
+    value: "manual",
+    label: t("手动固定"),
+    description: t("始终使用你指定的成员供应商，其余成员作为故障转移候选；可额外固定模型。"),
+  },
 ];
 
 function isAggregateRelayProfile(profile: Pick<RelayProfile, "relayMode" | "aggregate">): boolean {
@@ -7020,7 +7266,9 @@ function normalizeAggregateConfig(
       seen.add(member.profileId);
       return { profileId: member.profileId, weight: clampAggregateWeight(member.weight) };
     });
-  return { strategy, members };
+  const activeMemberRelayId = aggregate?.activeMemberRelayId ?? "";
+  const model = aggregate?.model ?? "";
+  return { strategy, members, activeMemberRelayId, model };
 }
 
 function aggregateMemberCandidates(settings: BackendSettings, aggregateId: string): RelayProfile[] {
@@ -7046,12 +7294,19 @@ function aggregateStrategyHelp(strategy: RelayAggregateStrategy): string {
   if (strategy === "failover") return t("失败切换会保留成员顺序，优先使用第一个可用供应商。");
   if (strategy === "conversationRoundRobin") return t("按对话轮转会让同一对话尽量保持固定成员，降低上下文漂移。");
   if (strategy === "requestRoundRobin") return t("按请求轮转会逐请求切换成员，适合供应商能力接近的场景。");
+  if (strategy === "manual") return t("手动固定会始终使用你指定的成员供应商，最适合“自己选供应商和模型”的场景。");
   return t("权重轮转会读取每个成员的权重值，权重越高的成员获得更多请求。");
 }
 
 function aggregateRelayProfileValidation(profile: RelayProfile): string | null {
   const aggregate = normalizeAggregateConfig(profile.aggregate, []);
-  return aggregate.members.length >= 1 ? null : t("聚合供应商至少需要勾选 1 个已填写 Base URL / Key 的 API 供应商。");
+  if (aggregate.members.length < 1) {
+    return t("聚合供应商至少需要勾选 1 个已填写 Base URL / Key 的 API 供应商。");
+  }
+  if (aggregate.strategy === "manual" && !aggregate.activeMemberRelayId) {
+    return t("手动固定策略需要指定一个固定成员供应商。");
+  }
+  return null;
 }
 
 function numberOrDefault(value: string, fallback: number) {
@@ -7109,7 +7364,19 @@ function stringifyError(error: unknown) {
 
 function loadInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
-  return window.localStorage.getItem("codex-plus-theme") === "light" ? "light" : "dark";
+  const stored = window.localStorage.getItem("codex-plus-theme");
+  if (stored === "light" || stored === "dark" || stored === "system") {
+    return stored;
+  }
+  return "dark";
+}
+
+function resolveEffectiveTheme(value: Theme): "dark" | "light" {
+  if (value !== "system") return value;
+  const prefersDark =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return prefersDark ? "dark" : "light";
 }
 
 function loadInitialRoute(): Route {

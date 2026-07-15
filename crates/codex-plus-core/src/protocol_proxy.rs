@@ -497,14 +497,29 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
     settings: crate::settings::BackendSettings,
     original_user_agent: Option<&str>,
 ) -> anyhow::Result<UpstreamProxyResponse> {
-    let request_json: Value = serde_json::from_str(body)?;
+    let mut request_json: Value = serde_json::from_str(body)?;
     let is_stream = request_json
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let context = RotationContext {
+    let mut context = RotationContext {
         conversation_id: conversation_id_from_responses_request(&request_json),
+        ..RotationContext::default()
     };
+    // newapi 式前缀路由（所有策略的默认前置行为）：
+    // 若请求模型形如 `prefix/model` 且前缀命中某聚合成员，则直接固定到该成员，
+    // 并把发往上游的模型改写为去掉前缀后的裸模型名。未命中则回退到原有策略。
+    let requested_model = request_json
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if let Some((member_relay_id, bare_model)) =
+        crate::relay_rotation::resolve_prefixed_model(&settings, &requested_model)
+    {
+        context.override_relay_id = Some(member_relay_id);
+        request_json["model"] = Value::String(bare_model);
+    }
     let relay = crate::relay_rotation::select_relay_for_request(&settings, context)?;
     let mut relays = vec![relay.clone()];
     relays.extend(crate::relay_rotation::fallback_relays_after(

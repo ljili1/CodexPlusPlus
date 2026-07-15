@@ -39,6 +39,27 @@ pub async fn read_codex_model_catalog() -> Value {
     let settings_path = crate::paths::default_settings_path();
     if settings_path.exists() {
         if let Ok(settings) = SettingsStore::new(settings_path).load() {
+            // 全局模型聚合优先：开启后把【所有】已配置供应商的模型合并为一个目录
+            // （带供应商前缀），无需创建聚合供应商。它是聚合目录的超集，因此先判断。
+            if let Some(catalog) = universal_model_catalog_value(&home, &settings) {
+                if catalog
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .map_or(false, |m| !m.is_empty())
+                {
+                    return catalog;
+                }
+            }
+            // newapi 式聚合目录：聚合激活且开关开启时，合并所有成员的模型（带供应商前缀）。
+            if let Some(catalog) = aggregate_model_catalog_value(&home, &settings) {
+                if catalog
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .map_or(false, |m| !m.is_empty())
+                {
+                    return catalog;
+                }
+            }
             let profile = settings.active_relay_profile();
             let catalog = relay_profile_model_catalog_value(&home, &profile);
             if catalog
@@ -102,6 +123,127 @@ fn relay_profile_model_catalog_value(home: &Path, profile: &RelayProfile) -> Val
         ],
         "responses_api": responses_api_status("unknown", "", "")
     })
+}
+
+/// newapi 式聚合目录：聚合激活且前缀开关开启时，把所有成员的模型合并为一个目录，
+/// 每个模型名加上成员的供应商前缀（`relay_id/model`），供 Codex 主界面直接选择。
+/// 返回 `None` 表示未激活聚合或开关关闭，调用方回退到单一 profile 目录。
+fn aggregate_model_catalog_value(
+    home: &Path,
+    settings: &crate::settings::BackendSettings,
+) -> Option<Value> {
+    if !settings.aggregate_prefixed_catalog_enabled {
+        return None;
+    }
+    let aggregate = settings.active_aggregate_relay_profile()?;
+    let mut models: Vec<String> = Vec::new();
+    let mut sources: Vec<Value> = Vec::new();
+    for member in &aggregate.members {
+        let Some(profile) = settings
+            .relay_profiles
+            .iter()
+            .find(|profile| profile.id == member.relay_id)
+        else {
+            continue;
+        };
+        let prefix = crate::relay_rotation::member_model_prefix(&profile.name, &profile.id);
+        let prefixed = relay_profile_model_ids(profile)
+            .into_iter()
+            .map(|model| format!("{prefix}/{model}"))
+            .collect::<Vec<_>>();
+        let count = prefixed.len();
+        models.extend(prefixed);
+        let member_name = if profile.name.trim().is_empty() {
+            profile.id.trim()
+        } else {
+            profile.name.trim()
+        };
+        sources.push(json!({
+            "id": format!("aggregate-member:{}", profile.id),
+            "type": "relay_profile_model_list",
+            "name": member_name,
+            "prefix": prefix,
+            "base_url": profile.base_url.trim(),
+            "status": "ok",
+            "models": count,
+            "responses_api": responses_api_status("unknown", "", "")
+        }));
+    }
+    let models = unique_strings(models);
+    if models.is_empty() {
+        return None;
+    }
+    let default_model = models.first().cloned().unwrap_or_default();
+    let provider_name = if aggregate.name.trim().is_empty() {
+        aggregate.id.trim()
+    } else {
+        aggregate.name.trim()
+    };
+    Some(json!({
+        "status": "ok",
+        "path": home.join("config.toml").to_string_lossy(),
+        "model": "",
+        "model_provider": aggregate.id.trim(),
+        "provider_name": provider_name,
+        "default_model": default_model,
+        "models": models,
+        "sources": sources,
+        "responses_api": responses_api_status("unknown", "", "")
+    }))
+}
+
+/// 全局模型聚合目录：当 `universal_model_catalog_enabled` 开启时，把【所有】已配置供应商的模型
+/// 合并为一个目录，每个模型名加上供应商前缀（`display_name/model`），无需创建聚合供应商。
+/// 返回 `None` 表示开关关闭或没有可用模型，调用方回退到聚合目录或单一 profile 目录。
+fn universal_model_catalog_value(
+    home: &Path,
+    settings: &crate::settings::BackendSettings,
+) -> Option<Value> {
+    if !settings.universal_model_catalog_enabled {
+        return None;
+    }
+    let mut models: Vec<String> = Vec::new();
+    let mut sources: Vec<Value> = Vec::new();
+    for profile in &settings.relay_profiles {
+        let prefix = crate::relay_rotation::member_model_prefix(&profile.name, &profile.id);
+        let prefixed = relay_profile_model_ids(profile)
+            .into_iter()
+            .map(|model| format!("{prefix}/{model}"))
+            .collect::<Vec<_>>();
+        let count = prefixed.len();
+        models.extend(prefixed);
+        let member_name = if profile.name.trim().is_empty() {
+            profile.id.trim()
+        } else {
+            profile.name.trim()
+        };
+        sources.push(json!({
+            "id": format!("relay-profile:{}", profile.id),
+            "type": "relay_profile_model_list",
+            "name": member_name,
+            "prefix": prefix,
+            "base_url": profile.base_url.trim(),
+            "status": "ok",
+            "models": count,
+            "responses_api": responses_api_status("unknown", "", "")
+        }));
+    }
+    let models = unique_strings(models);
+    if models.is_empty() {
+        return None;
+    }
+    let default_model = models.first().cloned().unwrap_or_default();
+    Some(json!({
+        "status": "ok",
+        "path": home.join("config.toml").to_string_lossy(),
+        "model": "",
+        "model_provider": "universal",
+        "provider_name": "聚合模型目录",
+        "default_model": default_model,
+        "models": models,
+        "sources": sources,
+        "responses_api": responses_api_status("unknown", "", "")
+    }))
 }
 
 fn relay_profile_model_ids(profile: &RelayProfile) -> Vec<String> {

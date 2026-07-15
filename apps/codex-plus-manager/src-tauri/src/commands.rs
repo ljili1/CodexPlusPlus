@@ -213,6 +213,13 @@ pub struct RelayProfileModelsPayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AggregateModelCatalogPayload {
+    pub status: String,
+    pub models: Vec<String>,
+    pub sources: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderDoctorCheck {
     pub id: String,
@@ -2291,6 +2298,50 @@ pub async fn fetch_relay_profile_models(
                 endpoint: String::new(),
             },
         ),
+    }
+}
+
+#[tauri::command]
+pub async fn read_aggregate_model_catalog() -> CommandResult<AggregateModelCatalogPayload> {
+    let catalog = codex_plus_core::model_catalog::read_codex_model_catalog().await;
+    let status = catalog
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let models = catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let sources = catalog
+        .get("sources")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    if status == "ok" && !models.is_empty() {
+        ok(
+            &format!("已合并 {} 个模型", models.len()),
+            AggregateModelCatalogPayload {
+                status,
+                models,
+                sources,
+            },
+        )
+    } else {
+        failed(
+            "聚合模型目录为空或未配置",
+            AggregateModelCatalogPayload {
+                status,
+                models,
+                sources,
+            },
+        )
     }
 }
 

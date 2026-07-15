@@ -485,6 +485,7 @@ export const EN_PLAIN: Record<string, string> = {
   "测试模型": "Test model",
   "消息": "Message",
   "深色": "Dark",
+  "跟随系统": "Follow system",
   "混入 API": "Mixed-in API",
   "混入 API KEY": "Mix in API KEY",
   "混入 API Key": "Mix in API Key",
@@ -541,7 +542,7 @@ export const EN_PLAIN: Record<string, string> = {
   "缺少管理工具快捷方式时可在安装维护页修复。": "When the manager shortcut is missing, repair it on the Install & Maintenance page.",
   "聚合": "Aggregate",
   "聚合/中转": "Aggregate/relay",
-  "聚合供应商": "Aggregate provider",
+  "聚合供应商": "Aggregate suppliers",
   "聚合供应商会在真实对话中轮转成员，请测试成员供应商": "Aggregate providers rotate members in real conversations; test the member providers instead",
   "聚合供应商只保存成员和策略配置，成员来自已有 API 供应商；切为当前后会通过本地协议代理轮转请求。":
     "Aggregate providers only store member and strategy config drawn from existing API providers; once active, requests rotate through the local protocol proxy.",
@@ -657,6 +658,35 @@ export const EN_PLAIN: Record<string, string> = {
   "正在读取本机环境": "Reading the local environment",
   "重新检测": "Check again",
   "排查可能干扰中转站配置的本机环境": "Find local environment settings that may interfere with relay configuration",
+  "启动 NEWAPI": "Start NEWAPI",
+  "停止 NEWAPI": "Stop NEWAPI",
+  "NEWAPI 启动失败": "NEWAPI startup failed",
+  "无法启动 newapi 进程，请检查可执行文件是否存在。": "Unable to start the newapi process. Check that the executable exists.",
+  "NEWAPI 未启动": "NEWAPI not running",
+  "已切换到 NEWAPI 供应商，但 newapi 进程未能启动。请检查 newapi 可执行文件是否存在于 Codex++ 安装目录。":
+    "Switched to the NEWAPI provider, but the newapi process failed to start. Check that the newapi executable exists in the Codex++ install directory.",
+  "启动 newapi 后台进程": "Start the newapi background process",
+  "停止 newapi 后台进程": "Stop the newapi background process",
+  "手动固定": "Manual",
+  "始终使用你指定的成员供应商，其余成员作为故障转移候选；可额外固定模型。":
+    "Always use the member supplier you specify; other members act as failover candidates. You can also pin a model.",
+  "手动固定会始终使用你指定的成员供应商，最适合“自己选供应商和模型”的场景。":
+    "Manual always uses the member supplier you specify — the best fit when you want to pick the supplier and model yourself.",
+  "固定成员供应商": "Pinned member supplier",
+  "请选择成员": "Select a member",
+  "固定模型（可选）": "Pinned model (optional)",
+  "留空沿用成员模型目录": "Leave empty to use the member's model catalog",
+  "手动固定策略需要指定一个固定成员供应商。": "The Manual strategy needs a pinned member supplier.",
+  "为该对话固定使用某个聚合成员供应商，优先于轮转策略": "Pin this conversation to a specific aggregate member, overriding rotation.",
+  "轮转（默认）": "Rotate (default)",
+  "合并模型目录": "Merge model catalog",
+  "聚合激活时把各成员模型合并为一个目录，并加供应商前缀（如 NEWAPI/gpt-5），按前缀直接路由到对应成员。": "When aggregation is active, merge every member's models into one catalog prefixed by supplier (e.g. NEWAPI/gpt-5); the prefix routes the request to that member directly.",
+  "供应商模型列表": "Supplier model list",
+  "按供应商分组展示配置的模型；开启合并后自动添加供应商前缀用于路由": "Models are grouped by supplier; enabling merge adds a supplier prefix for routing.",
+  "开启后所有供应商模型合并为同一个目录，Codex 主界面直接展示（如 NEWAPI/gpt-5），无需创建聚合供应商；按前缀自动路由到对应供应商。": "When enabled, all supplier models are merged into one catalog and shown directly in Codex (e.g. NEWAPI/gpt-5) without creating an aggregate supplier; requests are routed by prefix automatically.",
+  "共 {0} 个供应商，{1} 个模型": "{0} suppliers, {1} models",
+  "未配置模型": "No models configured",
+  "暂无可用模型": "No models available",
 };
 
 // Interpolated strings: tf("前缀 {0}", [x]) -> EN_TEMPLATE["前缀 {0}"] with {0} filled.

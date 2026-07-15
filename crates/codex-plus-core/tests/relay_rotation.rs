@@ -1,6 +1,7 @@
 use codex_plus_core::relay_rotation::{
     RelayRotationSelector, RotationContext, RotationEvent, SelectionError, fallback_relays_after,
-    record_relay_request_failure, select_relay_for_probe, select_relay_for_request,
+    member_model_prefix, record_relay_request_failure, resolve_prefixed_model,
+    select_relay_for_probe, select_relay_for_request,
 };
 use codex_plus_core::settings::{
     AggregateRelayMember, AggregateRelayProfile, AggregateRelayStrategy, BackendSettings,
@@ -44,6 +45,8 @@ fn aggregate(strategy: AggregateRelayStrategy) -> AggregateRelayProfile {
                 weight: 1,
             },
         ],
+        active_member_relay_id: String::new(),
+        model: String::new(),
     }
 }
 
@@ -62,6 +65,8 @@ fn aggregate_with_id(id: &str, strategy: AggregateRelayStrategy) -> AggregateRel
                 weight: 2,
             },
         ],
+        active_member_relay_id: String::new(),
+        model: String::new(),
     }
 }
 
@@ -406,4 +411,201 @@ fn select_relay_for_request_rebuilds_selector_when_active_aggregate_changes() {
 
     assert_eq!(first.id, "relay-a");
     assert_eq!(selected, vec!["relay-a", "relay-b", "relay-b"]);
+}
+
+#[test]
+fn manual_strategy_pins_configured_active_member() {
+    let mut settings = settings(AggregateRelayStrategy::Manual);
+    settings.aggregate_relay_profiles[0].active_member_relay_id = "relay-b".to_string();
+
+    let mut selector = RelayRotationSelector::from_settings(&settings).unwrap();
+    let first = selector
+        .select(&settings, RotationContext::for_conversation("chat-1"))
+        .unwrap();
+    let second = selector
+        .select(&settings, RotationContext::for_conversation("chat-1"))
+        .unwrap();
+
+    assert_eq!(first.id, "relay-b");
+    assert_eq!(second.id, "relay-b");
+}
+
+#[test]
+fn manual_strategy_falls_back_to_first_member_when_unset() {
+    let settings = settings(AggregateRelayStrategy::Manual);
+
+    let mut selector = RelayRotationSelector::from_settings(&settings).unwrap();
+    let selected = selector
+        .select(&settings, RotationContext::default())
+        .unwrap();
+
+    assert_eq!(selected.id, "relay-a");
+}
+
+#[test]
+fn override_relay_id_takes_precedence_over_strategy() {
+    let mut settings = settings(AggregateRelayStrategy::RequestRoundRobin);
+    settings.aggregate_relay_profiles[0].active_member_relay_id = "relay-a".to_string();
+
+    let mut selector = RelayRotationSelector::from_settings(&settings).unwrap();
+    let overridden = selector
+        .select(
+            &settings,
+            RotationContext {
+                override_relay_id: Some("relay-c".to_string()),
+                ..RotationContext::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(overridden.id, "relay-c");
+}
+
+#[test]
+fn override_model_is_applied_to_selected_profile() {
+    let settings = settings(AggregateRelayStrategy::Manual);
+
+    let mut selector = RelayRotationSelector::from_settings(&settings).unwrap();
+    let selected = selector
+        .select(
+            &settings,
+            RotationContext {
+                override_relay_id: Some("relay-b".to_string()),
+                override_model: Some("gpt-4o".to_string()),
+                ..RotationContext::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(selected.id, "relay-b");
+    assert_eq!(selected.model, "gpt-4o");
+}
+
+#[test]
+fn override_with_unknown_member_errors() {
+    let settings = settings(AggregateRelayStrategy::Manual);
+
+    let mut selector = RelayRotationSelector::from_settings(&settings).unwrap();
+    let error = selector
+        .select(
+            &settings,
+            RotationContext {
+                override_relay_id: Some("relay-z".to_string()),
+                ..RotationContext::default()
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SelectionError::UnknownMemberRelay {
+            aggregate_id: "agg".to_string(),
+            relay_id: "relay-z".to_string()
+        }
+    );
+}
+
+#[test]
+fn conversation_override_via_settings_map_routes_request() {
+    let _guard = global_selector_test_lock();
+    let mut settings = settings(AggregateRelayStrategy::RequestRoundRobin);
+    settings
+        .conversation_relay_overrides
+        .insert("chat-x".to_string(), "relay-c".to_string());
+
+    let selected = select_relay_for_request(
+        &settings,
+        RotationContext {
+            conversation_id: Some("chat-x".to_string()),
+            ..RotationContext::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(selected.id, "relay-c");
+}
+
+#[test]
+fn member_model_prefix_prefers_name_then_fallback_to_id() {
+    assert_eq!(member_model_prefix("DeepSeek", "relay-a"), "DeepSeek");
+    assert_eq!(member_model_prefix("", "relay-a"), "relay-a");
+    assert_eq!(member_model_prefix("  ", "relay-a"), "relay-a");
+}
+
+#[test]
+fn resolve_prefixed_model_routes_prefix_by_name_or_id() {
+    let settings = settings(AggregateRelayStrategy::Failover);
+    // relay-b has name "relay-b" in the test fixture, so both id and name match.
+    let resolved = resolve_prefixed_model(&settings, "relay-b/gpt-5").unwrap();
+    assert_eq!(resolved.0, "relay-b");
+    assert_eq!(resolved.1, "gpt-5");
+}
+
+#[test]
+fn resolve_prefixed_model_is_case_insensitive_on_prefix() {
+    let settings = settings(AggregateRelayStrategy::Failover);
+    let resolved = resolve_prefixed_model(&settings, "RELAY-A/gpt-4").unwrap();
+    assert_eq!(resolved.0, "relay-a");
+    assert_eq!(resolved.1, "gpt-4");
+}
+
+#[test]
+fn resolve_prefixed_model_falls_back_when_no_prefix() {
+    let settings = settings(AggregateRelayStrategy::Failover);
+    assert!(resolve_prefixed_model(&settings, "gpt-5").is_none());
+}
+
+#[test]
+fn resolve_prefixed_model_returns_none_for_unknown_prefix() {
+    let settings = settings(AggregateRelayStrategy::Failover);
+    assert!(resolve_prefixed_model(&settings, "unknown/gpt-5").is_none());
+}
+
+#[test]
+fn resolve_prefixed_model_disabled_when_toggle_off() {
+    let mut settings = settings(AggregateRelayStrategy::Failover);
+    settings.aggregate_prefixed_catalog_enabled = false;
+    assert!(resolve_prefixed_model(&settings, "relay-b/gpt-5").is_none());
+}
+
+#[test]
+fn resolve_prefixed_model_disabled_without_active_aggregate() {
+    let mut settings = settings(AggregateRelayStrategy::Failover);
+    settings.aggregate_relay_profiles.clear();
+    assert!(resolve_prefixed_model(&settings, "relay-b/gpt-5").is_none());
+}
+
+#[test]
+fn resolve_prefixed_model_universal_aggregates_all_profiles_without_aggregate() {
+    let mut settings = settings(AggregateRelayStrategy::Failover);
+    settings.universal_model_catalog_enabled = true;
+    settings.aggregate_prefixed_catalog_enabled = false;
+    // relay-c 是已配置供应商但不是聚合成员，开启全局聚合后也能按前缀路由。
+    let resolved = resolve_prefixed_model(&settings, "relay-c/gpt-5").unwrap();
+    assert_eq!(resolved.0, "relay-c");
+    assert_eq!(resolved.1, "gpt-5");
+    // 聚合成员同样可路由。
+    let resolved_a = resolve_prefixed_model(&settings, "relay-a/gpt-4").unwrap();
+    assert_eq!(resolved_a.0, "relay-a");
+    assert_eq!(resolved_a.1, "gpt-4");
+}
+
+#[test]
+fn resolve_prefixed_model_universal_routes_by_display_name_prefix() {
+    let mut settings = settings(AggregateRelayStrategy::Failover);
+    settings.universal_model_catalog_enabled = true;
+    settings.aggregate_prefixed_catalog_enabled = false;
+    settings.relay_profiles[0].name = "DeepSeek".to_string();
+    // 前缀优先匹配配置名称。
+    let resolved = resolve_prefixed_model(&settings, "DeepSeek/gpt-5").unwrap();
+    assert_eq!(resolved.0, "relay-a");
+    assert_eq!(resolved.1, "gpt-5");
+}
+
+#[test]
+fn resolve_prefixed_model_universal_disabled_when_toggle_off() {
+    let mut settings = settings(AggregateRelayStrategy::Failover);
+    settings.universal_model_catalog_enabled = false;
+    settings.aggregate_prefixed_catalog_enabled = false;
+    assert!(resolve_prefixed_model(&settings, "relay-b/gpt-5").is_none());
 }

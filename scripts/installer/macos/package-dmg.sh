@@ -121,6 +121,10 @@ prepare_icon
 create_app "Codex++" "CodexPlusPlus" "$BINARY_DIR/codex-plus-plus" "com.bigpizzav3.codexplusplus" "true"
 create_app "Codex++ 管理工具" "CodexPlusPlusManager" "$BINARY_DIR/codex-plus-plus-manager" "com.bigpizzav3.codexplusplus.manager" "false"
 
+# 注意：newapi 不再随 .app 分发（避免 macOS arm64 因第三方二进制未签名导致 codesign
+# 失败）。它会在运行时（安装/首次启动阶段）按需下载到用户状态目录，且目标目录已存在
+# 时跳过下载。因此这里不再把 newapi 拷入 bundle，也不再对它签名。
+
 sign_app "$STAGE/Codex++.app"
 sign_app "$STAGE/Codex++ 管理工具.app"
 

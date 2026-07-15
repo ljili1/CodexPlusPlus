@@ -32,6 +32,8 @@ Section "Install"
   Pop $0
   nsExec::ExecToLog 'taskkill /IM codex-plus-plus-manager.exe /F'
   Pop $0
+  nsExec::ExecToLog 'taskkill /IM newapi.exe /F'
+  Pop $0
 
   File "${ROOT}\dist\windows\app\codex-plus-plus.exe"
   File "${ROOT}\dist\windows\app\codex-plus-plus-manager.exe"
@@ -61,6 +63,8 @@ Section "Uninstall"
   Pop $0
   nsExec::ExecToLog 'taskkill /IM codex-plus-plus-manager.exe /F'
   Pop $0
+  nsExec::ExecToLog 'taskkill /IM newapi.exe /F'
+  Pop $0
 
   Delete "$DESKTOP\Codex++.lnk"
   Delete "$DESKTOP\Codex++ 管理工具.lnk"
@@ -73,6 +77,7 @@ Section "Uninstall"
 
   Delete "$INSTDIR\codex-plus-plus.exe"
   Delete "$INSTDIR\codex-plus-plus-manager.exe"
+  Delete "$INSTDIR\newapi.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 

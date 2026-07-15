@@ -103,6 +103,8 @@ pub enum AggregateRelayStrategy {
     ConversationRoundRobin,
     RequestRoundRobin,
     WeightedRoundRobin,
+    /// 手动固定：始终使用 `active_member_relay_id` 指定的成员，其余成员作为故障转移候选。
+    Manual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -123,6 +125,12 @@ pub struct AggregateRelayProfile {
     pub strategy: AggregateRelayStrategy,
     #[serde(default)]
     pub members: Vec<AggregateRelayMember>,
+    /// 仅 `Manual` 策略使用：固定路由到的成员 `relay_id`。
+    #[serde(default, rename = "activeMemberRelayId")]
+    pub active_member_relay_id: String,
+    /// 可选：手动策略下强制使用的模型；为空时沿用成员的模型目录。
+    #[serde(default, rename = "model")]
+    pub model: String,
 }
 
 impl Default for RelayProfile {
@@ -317,6 +325,18 @@ pub struct BackendSettings {
     pub aggregate_relay_profiles: Vec<AggregateRelayProfile>,
     #[serde(rename = "activeAggregateRelayId", default)]
     pub active_aggregate_relay_id: String,
+    /// 逐对话绑定供应商：`conversation_id` -> 成员 `relay_id`。任意策略下都优先于轮转。
+    #[serde(rename = "conversationRelayOverrides", default)]
+    pub conversation_relay_overrides: HashMap<String, String>,
+    /// newapi 式聚合目录：聚合激活时把所有成员的模型合并为一个目录并加上供应商前缀
+    /// （如 `deepseek/gpt-5`），请求时按前缀直接路由到对应成员。默认开启。
+    #[serde(rename = "aggregatePrefixedCatalogEnabled", default = "default_true")]
+    pub aggregate_prefixed_catalog_enabled: bool,
+    /// 全局模型聚合目录：开启后把所有已配置供应商的模型合并为一个目录（按供应商名称加前缀，
+    /// 如 `NEWAPI/gpt-5`），无需在 Manager 中创建聚合供应商。请求时按前缀自动路由到对应供应商。
+    /// 默认关闭，需用户在供应商配置页手动开启。
+    #[serde(rename = "universalModelCatalogEnabled", default)]
+    pub universal_model_catalog_enabled: bool,
     #[serde(rename = "relayTestModel", default = "default_relay_test_model")]
     pub relay_test_model: String,
 }
@@ -351,6 +371,9 @@ impl Default for BackendSettings {
             zed_remote_sync_to_zed_settings: false,
             codex_app_upstream_worktree_create: true,
             codex_app_native_menu_placement: true,
+            conversation_relay_overrides: HashMap::new(),
+            aggregate_prefixed_catalog_enabled: true,
+            universal_model_catalog_enabled: false,
             codex_app_native_menu_localization: true,
             codex_app_service_tier_controls: false,
             codex_app_pet_real_mouse_look: false,
@@ -1738,6 +1761,8 @@ experimental_bearer_token = "sk-existing""#
                         weight: 3,
                     },
                 ],
+                active_member_relay_id: String::new(),
+                model: String::new(),
             }],
             active_aggregate_relay_id: "agg".to_string(),
             ..BackendSettings::default()
