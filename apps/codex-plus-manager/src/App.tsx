@@ -15,7 +15,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
@@ -115,6 +114,27 @@ type Status = "ok" | "failed" | "not_implemented" | "not_checked" | string;
 type CommandResult<T> = T & {
   status: Status;
   message: string;
+};
+
+type ConfigBackupPayload = CommandResult<{
+  files: number;
+  bytes: number;
+}>;
+
+type BackupOptions = {
+  config: boolean;
+  history: boolean;
+  memories: boolean;
+  gui: boolean;
+  logs: boolean;
+};
+
+const DefaultBackupOptions: BackupOptions = {
+  config: true,
+  history: true,
+  memories: true,
+  gui: true,
+  logs: false,
 };
 
 type PendingDreamSkinRestart = {
@@ -1794,6 +1814,64 @@ export function App() {
     }
   };
 
+  const [backupOptions, setBackupOptions] = useState<BackupOptions>(DefaultBackupOptions);
+
+  const exportConfig = async () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    let selected: unknown;
+    try {
+      selected = await saveDialog({
+        defaultPath: `codex-plus-config-${stamp}.zip`,
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["zip"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导出"), tf("打开选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (!selected) return;
+    const dest = typeof selected === "string" ? selected : "";
+    if (!dest) return;
+    const result = await run(() =>
+      call<ConfigBackupPayload>("export_config", { dest, options: backupOptions }),
+    );
+    if (result) {
+      showNotice(t("配置导出"), result.message, result.status);
+    }
+  };
+
+  const importConfig = async () => {
+    const confirmed = window.confirm(
+      t(
+        "导入配置会覆盖当前设置、密钥与对话历史。备份包以明文存储密钥，请确认文件来源可信后再继续。是否继续？",
+      ),
+    );
+    if (!confirmed) return;
+    let selected: unknown;
+    try {
+      selected = await open({
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["zip"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导入"), tf("打开选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (!selected) return;
+    const src = Array.isArray(selected)
+      ? selected[0]
+      : typeof selected === "string"
+        ? selected
+        : "";
+    if (!src) return;
+    const result = await run(() =>
+      call<ConfigBackupPayload>("import_config", { src }),
+    );
+    if (result) {
+      showNotice(t("配置导入"), result.message, result.status);
+    }
+  };
+
   const watcherAction = async (command: string) => {
     const result = await run(() => call<WatcherResult>(command));
     if (result) {
@@ -2468,6 +2546,8 @@ export function App() {
       installEntrypoints,
       uninstallEntrypoints,
       repairShortcuts,
+      exportConfig,
+      importConfig,
       checkUpdate,
       performUpdate,
       saveSettings,
@@ -2843,7 +2923,7 @@ export function App() {
             />
           ) : null}
           {route === "settings" ? (
-            <SettingsScreen settings={settings} theme={theme} setTheme={setTheme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
+            <SettingsScreen settings={settings} theme={theme} setTheme={setTheme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} backupOptions={backupOptions} setBackupOptions={setBackupOptions} />
           ) : null}
         </section>
       </main>
@@ -2924,6 +3004,8 @@ type Actions = {
   installEntrypoints: () => Promise<void>;
   uninstallEntrypoints: () => Promise<void>;
   repairShortcuts: () => Promise<void>;
+  exportConfig: () => Promise<void>;
+  importConfig: () => Promise<void>;
   checkUpdate: () => Promise<void>;
   performUpdate: () => Promise<void>;
   saveSettings: () => Promise<void>;
@@ -5021,6 +5103,8 @@ function SettingsScreen({
   form,
   onFormChange,
   actions,
+  backupOptions,
+  setBackupOptions,
 }: {
   settings: SettingsResult | null;
   theme: Theme;
@@ -5028,6 +5112,8 @@ function SettingsScreen({
   form: BackendSettings;
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
+  backupOptions: BackupOptions;
+  setBackupOptions: (value: BackupOptions) => void;
 }) {
   return (
     <>
@@ -5223,6 +5309,84 @@ function SettingsScreen({
               {t("重置背景")}
             </Button>
           </Toolbar>
+        </CardContent>
+      </Panel>
+      <Panel>
+        <CardHead
+          title={t("配置备份")}
+          detail={t("选择要包含在备份包中的内容，再导出 / 导入。导出包为明文 zip，含密钥，请妥善保管。")}
+        />
+        <CardContent>
+          <div className="backup-options">
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.config}
+                onChange={(e) => setBackupOptions({ ...backupOptions, config: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("配置与密钥")}</span>
+                <span className="backup-option-hint">{t("config.toml / auth.json / .sandbox-secrets")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.history}
+                onChange={(e) => setBackupOptions({ ...backupOptions, history: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("对话历史")}</span>
+                <span className="backup-option-hint">{t("sessions / archived_sessions / skills")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.memories}
+                onChange={(e) => setBackupOptions({ ...backupOptions, memories: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("记忆目标状态库")}</span>
+                <span className="backup-option-hint">{t("memories / goals / state 等 .sqlite")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.gui}
+                onChange={(e) => setBackupOptions({ ...backupOptions, gui: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("界面设置")}</span>
+                <span className="backup-option-hint">{t("settings.json / dream-skin 壁纸")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.logs}
+                onChange={(e) => setBackupOptions({ ...backupOptions, logs: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("日志")}</span>
+                <span className="backup-option-hint">{t("logs_2.sqlite，可能较大")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-optional">{t("默认不选")}</span>
+            </label>
+          </div>
+          <div className="settings-block stepwise-settings-block">
+            <div className="form-row">
+              <Button onClick={() => void actions.exportConfig()}>{t("导出配置")}</Button>
+              <Button variant="secondary" onClick={() => void actions.importConfig()}>
+                {t("导入配置")}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Panel>
       <Panel>

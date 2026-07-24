@@ -51,20 +51,21 @@ fn manager_main_window_uses_default_window_icon_explicitly() {
 }
 
 #[test]
-fn manager_close_minimizes_to_tray_without_confirmation() {
+fn manager_close_hides_to_tray_without_confirmation() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let app_tsx = manifest_dir.parent().unwrap().join("src/App.tsx");
     let app_tsx = std::fs::read_to_string(&app_tsx).expect("read manager App.tsx");
 
+    // Close minimizes to tray silently: no native message box and no choice dialog.
+    assert!(lib_rs.contains("prevent_close"));
+    assert!(lib_rs.contains("let _ = close_event_window.hide();"));
     assert!(!lib_rs.contains("MessageDialogButtons"));
     assert!(!lib_rs.contains(".dialog()"));
-    assert!(!lib_rs.contains("manager://close-requested"));
-    assert!(lib_rs.contains("let _ = close_event_window.hide();"));
+    assert!(!lib_rs.contains("close-requested"));
     assert!(!app_tsx.contains("CloseConfirmDialog"));
-    assert!(app_tsx.contains("manager_exit_app"));
-    assert!(app_tsx.contains("manager_hide_to_tray"));
+    assert!(!app_tsx.contains("CloseChoiceDialog"));
 }
 
 #[test]
