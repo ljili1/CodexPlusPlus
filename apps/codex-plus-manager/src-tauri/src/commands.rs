@@ -6042,17 +6042,28 @@ pub fn export_config(dest: String, options: codex_plus_core::config_backup::Back
 #[tauri::command]
 pub fn import_config(src: String) -> CommandResult<ConfigBackupPayload> {
     match codex_plus_core::config_backup::import_config(Path::new(&src)) {
-        Ok(result) => ok(
-            &format!(
+        Ok(result) => {
+            let mut message = format!(
                 "已导入 {} 个文件，共 {}。重启 Codex++ 后生效。",
                 result.files,
                 format_byte_size(result.bytes)
-            ),
-            ConfigBackupPayload {
-                files: result.files,
-                bytes: result.bytes,
-            },
-        ),
+            );
+            if !result.warnings.is_empty() {
+                message.push_str("\n\n部分内容被跳过：");
+                for warning in &result.warnings {
+                    message.push_str("\n- ");
+                    message.push_str(warning);
+                }
+                message.push_str("\n\n被占用的数据库需要关闭 Codex++ 后重新导入才会更新。");
+            }
+            ok(
+                &message,
+                ConfigBackupPayload {
+                    files: result.files,
+                    bytes: result.bytes,
+                },
+            )
+        }
         Err(error) => failed(
             &format!("导入失败：{error}"),
             ConfigBackupPayload {

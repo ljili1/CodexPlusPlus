@@ -1382,4 +1382,25 @@ export const EN_BACKEND_PATTERNS: Array<[RegExp, string]> = [
   [/^启动系统浏览器失败：(.+)$/, "Failed to launch system browser: $1"],
   [/^诊断报告序列化失败：(.+)$/, "Failed to serialize diagnostics report: $1"],
   [/^响应：(.+)$/, "Response: $1"],
+  // 配置备份导出 / 导入
+  [/^已导出 (\d+) 个文件，共 (.+)。$/, "Exported $1 file(s), $2 in total."],
+  [/^导出失败：([\s\S]+)$/, "Export failed: $1"],
+  [
+    /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。\n\n部分内容被跳过：([\s\S]+)$/,
+    "Imported $1 file(s), $2 in total. Restart Codex++ to apply.\n\nSome entries were skipped:$3",
+  ],
+  [
+    /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。$/,
+    "Imported $1 file(s), $2 in total. Restart Codex++ to apply.",
+  ],
+  [/^导入失败：([\s\S]+)$/, "Import failed: $1"],
+  [
+    /^(.+?)：正被其他程序占用，已跳过（关闭 Codex\+\+ 与 Codex 会话后重新导入）$/,
+    "$1: in use by another process, skipped (close Codex++ and Codex sessions, then import again)",
+  ],
+  [
+    /^(.+?)：数据库被占用，已跳过（关闭 Codex\+\+ 与 Codex 会话后重新导入）$/,
+    "$1: database in use, skipped (close Codex++ and Codex sessions, then import again)",
+  ],
+  [/^(.+?)：文件被其他程序占用，已跳过$/, "$1: in use by another process, skipped"],
 ];
