@@ -57,13 +57,21 @@ impl std::error::Error for SelectionError {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RotationContext {
     pub conversation_id: Option<String>,
+    /// 请求里的模型名。开启「统一模型目录」后，带供应商前缀的模型会据此锁定供应商。
+    pub model: Option<String>,
 }
 
 impl RotationContext {
     pub fn for_conversation(conversation_id: impl Into<String>) -> Self {
         Self {
             conversation_id: Some(conversation_id.into()),
+            model: None,
         }
+    }
+
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model;
+        self
     }
 }
 
@@ -187,10 +195,68 @@ impl RelayRotationSelector {
     }
 }
 
+/// 返回用于「统一模型目录」的模型前缀，例如 `我的供应商/`。
+/// 供应商显示名为空时回退到 id；两者皆空则返回空串，该供应商不参与前缀匹配。
+pub fn member_model_prefix(name: &str, id: &str) -> String {
+    let label = if name.trim().is_empty() {
+        id.trim()
+    } else {
+        name.trim()
+    };
+    if label.is_empty() {
+        String::new()
+    } else {
+        format!("{label}/")
+    }
+}
+
+/// 开启「统一模型目录」时，若 `model` 以某个已配置供应商的前缀开头，
+/// 返回该供应商 id 与去掉前缀后的模型名。先按原文匹配，再回退到大小写不敏感匹配。
+pub fn resolve_prefixed_model(settings: &BackendSettings, model: &str) -> Option<(String, String)> {
+    if !settings.universal_model_catalog_enabled || model.is_empty() {
+        return None;
+    }
+    // 预先算好各供应商前缀，避免两轮匹配里重复分配字符串。
+    let candidates: Vec<(String, String)> = settings
+        .relay_profiles
+        .iter()
+        .map(|profile| (profile.id.clone(), member_model_prefix(&profile.name, &profile.id)))
+        .filter(|(_, prefix)| !prefix.is_empty())
+        .collect();
+
+    if let Some((id, prefix)) = candidates
+        .iter()
+        .find(|(_, prefix)| model.starts_with(prefix.as_str()))
+    {
+        return Some((id.clone(), model[prefix.len()..].to_string()));
+    }
+
+    // 大小写不敏感匹配按字符数截断，避免把多字节字符切坏。
+    let lower = model.to_lowercase();
+    for (id, prefix) in &candidates {
+        let lower_prefix = prefix.to_lowercase();
+        if lower.starts_with(&lower_prefix) {
+            let rest: String = model.chars().skip(prefix.chars().count()).collect();
+            return Some((id.clone(), rest));
+        }
+    }
+    None
+}
+
 pub fn select_relay_for_request(
     settings: &BackendSettings,
     context: RotationContext,
 ) -> Result<RelayProfile, SelectionError> {
+    // 「统一模型目录」下模型名自带供应商前缀，直接锁定对应供应商，跳过轮询。
+    if let Some(model) = &context.model {
+        if let Some((relay_id, _)) = resolve_prefixed_model(settings, model) {
+            clear_global_selector();
+            if let Some(profile) = relay_profile_by_id(settings, &relay_id) {
+                return Ok(profile);
+            }
+        }
+    }
+
     let Some(active_aggregate) = settings.active_aggregate_relay_profile() else {
         clear_global_selector();
         return Ok(settings.active_relay_profile());
@@ -328,7 +394,7 @@ fn clear_global_selector() {
     *guard = None;
 }
 
-fn relay_profile_by_id(settings: &BackendSettings, relay_id: &str) -> Option<RelayProfile> {
+pub fn relay_profile_by_id(settings: &BackendSettings, relay_id: &str) -> Option<RelayProfile> {
     settings
         .relay_profiles
         .iter()

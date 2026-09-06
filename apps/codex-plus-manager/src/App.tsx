@@ -46,6 +46,7 @@ import {
   MoreHorizontal,
   PackageOpen,
   FileCode2,
+  Monitor,
   Moon,
   Network,
   Power,
@@ -159,6 +160,27 @@ type CommandResult<T> = T & {
   message: string;
 };
 
+type ConfigBackupPayload = CommandResult<{
+  files: number;
+  bytes: number;
+}>;
+
+type BackupOptions = {
+  config: boolean;
+  history: boolean;
+  memories: boolean;
+  gui: boolean;
+  logs: boolean;
+};
+
+const DefaultBackupOptions: BackupOptions = {
+  config: true,
+  history: true,
+  memories: true,
+  gui: true,
+  logs: false,
+};
+
 type PendingDreamSkinCommunityResult = CommandResult<{ versionId: string }>;
 
 type PendingDreamSkinRestart = {
@@ -230,7 +252,10 @@ type BackendSettings = {
   providerSyncManualProviders: string[];
   providerSyncLastSelectedProvider: string;
   relayProfilesEnabled: boolean;
+  universalModelCatalogEnabled: boolean;
   enhancementsEnabled: boolean;
+  globalMemoryEnabled: boolean;
+  globalMemoryContent: string;
   codexAppPluginMarketplaceUnlock: boolean;
   codexAppModelWhitelistUnlock: boolean;
   codexAppSessionDelete: boolean;
@@ -878,7 +903,24 @@ type ManagerNavigationIntent = {
 };
 
 type Route = "overview" | "relay" | "grok" | "relayEnvironment" | "sessions" | "context" | "skills" | "weixin" | "enhance" | "dreamSkin" | "zedRemote" | "userScripts" | "recommendations" | "maintenance" | "about" | "settings";
-type Theme = "dark" | "light";
+type Theme = "dark" | "light" | "system";
+/// 主题的最终生效值：三态中的 "system" 会被解析为具体的深 / 浅。
+type ResolvedTheme = Extract<Theme, "dark" | "light">;
+
+/// 顶栏按钮的循环顺序：深色 → 浅色 → 跟随系统 → 深色。
+const THEME_CYCLE: readonly Theme[] = ["dark", "light", "system"];
+
+/// 设置页三段式主题选择器的选项，顺序与展示一致。
+const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string }> = [
+  { value: "dark", label: "深色" },
+  { value: "light", label: "浅色" },
+  { value: "system", label: "跟随系统" },
+];
+
+function nextTheme(current: Theme): Theme {
+  const index = THEME_CYCLE.indexOf(current);
+  return THEME_CYCLE[(index + 1) % THEME_CYCLE.length]!;
+}
 
 const MANAGER_NAVIGATION_EVENT = "manager-navigation-requested";
 const SETTINGS_STEPWISE_SECTION_ID = "settings-stepwise";
@@ -924,7 +966,10 @@ const defaultSettings: BackendSettings = {
   providerSyncManualProviders: [],
   providerSyncLastSelectedProvider: "",
   relayProfilesEnabled: true,
+  universalModelCatalogEnabled: true,
   enhancementsEnabled: true,
+  globalMemoryEnabled: false,
+  globalMemoryContent: "",
   codexAppPluginMarketplaceUnlock: true,
   codexAppModelWhitelistUnlock: true,
   codexAppSessionDelete: true,
@@ -2207,6 +2252,64 @@ export function App() {
     }
   };
 
+  const [backupOptions, setBackupOptions] = useState<BackupOptions>(DefaultBackupOptions);
+
+  const exportConfig = async () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    let selected: unknown;
+    try {
+      selected = await saveDialog({
+        defaultPath: `codex-plus-config-${stamp}.zip`,
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["zip"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导出"), tf("打开选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (!selected) return;
+    const dest = typeof selected === "string" ? selected : "";
+    if (!dest) return;
+    const result = await run(() =>
+      call<ConfigBackupPayload>("export_config", { dest, options: backupOptions }),
+    );
+    if (result) {
+      showNotice(t("配置导出"), result.message, result.status);
+    }
+  };
+
+  const importConfig = async () => {
+    const confirmed = window.confirm(
+      t(
+        "导入配置会覆盖当前设置、密钥与对话历史。备份包以明文存储密钥，请确认文件来源可信后再继续。是否继续？",
+      ),
+    );
+    if (!confirmed) return;
+    let selected: unknown;
+    try {
+      selected = await open({
+        filters: [{ name: t("Codex++ 配置备份"), extensions: ["zip"] }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showNotice(t("配置导入"), tf("打开选择器失败：{0}", [message]), "failed");
+      return;
+    }
+    if (!selected) return;
+    const src = Array.isArray(selected)
+      ? selected[0]
+      : typeof selected === "string"
+        ? selected
+        : "";
+    if (!src) return;
+    const result = await run(() =>
+      call<ConfigBackupPayload>("import_config", { src }),
+    );
+    if (result) {
+      showNotice(t("配置导入"), result.message, result.status);
+    }
+  };
+
   const watcherAction = async (command: string) => {
     const result = await run(() => call<WatcherResult>(command));
     if (result) {
@@ -2967,10 +3070,26 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [route]);
 
+  // 持久化与生效拆成两个 effect：写入 localStorage 无需订阅系统主题，
+  // 避免每次系统主题变化都重复落盘。
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    document.documentElement.classList.toggle("light", theme === "light");
     window.localStorage.setItem("codex-plus-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const applyTheme = () => {
+      const resolved = resolveTheme(theme);
+      document.documentElement.classList.toggle("dark", resolved === "dark");
+      document.documentElement.classList.toggle("light", resolved === "light");
+    };
+    applyTheme();
+    if (theme !== "system" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    // "跟随系统" 模式实时响应系统深浅色变化。
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    mediaQuery.addEventListener("change", applyTheme);
+    return () => mediaQuery.removeEventListener("change", applyTheme);
   }, [theme]);
 
   const saveCodexAppPath = async (appPath: string) => {
@@ -3057,6 +3176,8 @@ export function App() {
       installEntrypoints,
       uninstallEntrypoints,
       repairShortcuts,
+      exportConfig,
+      importConfig,
       checkUpdate,
       performUpdate,
       saveSettings,
@@ -3250,7 +3371,7 @@ export function App() {
       uninstallWatcher: () => watcherAction("uninstall_watcher"),
       enableWatcher: () => watcherAction("enable_watcher"),
       disableWatcher: () => watcherAction("disable_watcher"),
-      toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      toggleTheme: () => setTheme(nextTheme),
     }),
     [route, launchForm, settingsForm, settings, overview, removeOwnedData, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, sessionShareUrl, importSessionUrl, zedRemoteProjects, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, dreamSkinLibrary, dreamSkinMarket, dreamSkinCommunity, selectedDreamSkinTheme, savedDreamSkinThemeDraft, dreamSkinThemeDraft, dreamSkinDraftDirty, pendingDreamSkinRestart],
   );
@@ -3326,10 +3447,22 @@ export function App() {
             <Button
               onClick={actions.toggleTheme}
               size="icon"
-              title={theme === "dark" ? t("切换到浅色") : t("切换到深色")}
+              title={
+                theme === "dark"
+                  ? t("切换到浅色")
+                  : theme === "light"
+                    ? t("切换到跟随系统")
+                    : t("切换到深色")
+              }
               variant="outline"
             >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : theme === "light" ? (
+                <Moon className="h-4 w-4" />
+              ) : (
+                <Monitor className="h-4 w-4" />
+              )}
             </Button>
             <Button onClick={() => void actions.restart()} title={t("重启 Codex++")} variant="outline">
               <Rocket className="h-4 w-4" />
@@ -3460,9 +3593,12 @@ export function App() {
               dirty={settingsDirty}
               settings={settings}
               theme={theme}
+              setTheme={setTheme}
               form={settingsForm}
               onFormChange={setSettingsForm}
               actions={actions}
+              backupOptions={backupOptions}
+              setBackupOptions={setBackupOptions}
             />
           ) : null}
         </section>
@@ -3551,6 +3687,8 @@ type Actions = {
   installEntrypoints: () => Promise<void>;
   uninstallEntrypoints: () => Promise<void>;
   repairShortcuts: () => Promise<void>;
+  exportConfig: () => Promise<void>;
+  importConfig: () => Promise<void>;
   checkUpdate: () => Promise<void>;
   performUpdate: () => Promise<void>;
   saveSettings: () => Promise<void>;
@@ -4375,6 +4513,21 @@ function RelayScreen({
             <span>
               <strong>{t("启用供应商配置切换")}</strong>
               <small>{t("关闭后本工具不会在手动切换时写入 Codex 的 config.toml / auth.json；启动 Codex 时始终不会自动改这些文件。")}</small>
+            </span>
+            <ToggleVisual />
+          </label>
+          <label className="switch-row">
+            <input
+              checked={normalized.universalModelCatalogEnabled !== false}
+              onChange={(event) => {
+                const next = { ...normalized, universalModelCatalogEnabled: event.currentTarget.checked };
+                void saveRelaySettings(next);
+              }}
+              type="checkbox"
+            />
+            <span>
+              <strong>{t("统一模型目录")}</strong>
+              <small>{t("开启后把所有已配置供应商的模型合并到同一模型目录，并以供应商显示名称作为前缀（如「我的供应商/gpt-5」）。")}</small>
             </span>
             <ToggleVisual />
           </label>
@@ -6384,16 +6537,22 @@ function SettingsScreen({
   dirty,
   settings,
   theme,
+  setTheme,
   form,
   onFormChange,
   actions,
+  backupOptions,
+  setBackupOptions,
 }: {
   dirty: boolean;
   settings: SettingsResult | null;
   theme: Theme;
+  setTheme: (value: Theme) => void;
   form: BackendSettings;
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
+  backupOptions: BackupOptions;
+  setBackupOptions: (value: BackupOptions) => void;
 }) {
   return (
     <div className="settings-page">
@@ -6403,9 +6562,25 @@ function SettingsScreen({
           <div className="theme-row">
             <div>
               <strong>{t("界面主题")}</strong>
-              <span>{t("当前为")}{theme === "dark" ? t("深色") : t("浅色")}{t("模式。")}</span>
+              <span>
+                {t("当前为")}
+                {theme === "system" ? t("跟随系统") : theme === "dark" ? t("深色") : t("浅色")}
+                {t("模式。")}
+              </span>
             </div>
-            <Button variant="secondary" onClick={actions.toggleTheme}>{t("切换主题")}</Button>
+            <div className="theme-segment" role="group" aria-label={t("界面主题")}>
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={theme === option.value ? "active" : ""}
+                  aria-pressed={theme === option.value}
+                  onClick={() => setTheme(option.value)}
+                >
+                  {t(option.label)}
+                </button>
+              ))}
+            </div>
           </div>
           <Field className="settings-test-model-field" label={t("供应商测试模型")}>
             <Input
@@ -6585,6 +6760,116 @@ function SettingsScreen({
               {t("重置背景")}
             </Button>
           </Toolbar>
+        </CardContent>
+      </Panel>
+      <Panel>
+        <CardHead
+          title={t("配置备份")}
+          detail={t("选择要包含在备份包中的内容，再导出 / 导入。导出包为明文 zip，含密钥，请妥善保管。")}
+        />
+        <CardContent>
+          <div className="backup-options">
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.config}
+                onChange={(e) => setBackupOptions({ ...backupOptions, config: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("配置与密钥")}</span>
+                <span className="backup-option-hint">{t("config.toml / auth.json / .sandbox-secrets")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.history}
+                onChange={(e) => setBackupOptions({ ...backupOptions, history: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("对话历史")}</span>
+                <span className="backup-option-hint">{t("sessions / archived_sessions / skills")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.memories}
+                onChange={(e) => setBackupOptions({ ...backupOptions, memories: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("记忆目标状态库")}</span>
+                <span className="backup-option-hint">{t("memories / goals / state 等 .sqlite")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.gui}
+                onChange={(e) => setBackupOptions({ ...backupOptions, gui: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("界面设置")}</span>
+                <span className="backup-option-hint">{t("settings.json / dream-skin 壁纸")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
+            </label>
+            <label className="backup-option">
+              <input
+                type="checkbox"
+                checked={backupOptions.logs}
+                onChange={(e) => setBackupOptions({ ...backupOptions, logs: e.target.checked })}
+              />
+              <span className="backup-option-body">
+                <span className="backup-option-title">{t("日志")}</span>
+                <span className="backup-option-hint">{t("logs_2.sqlite，可能较大")}</span>
+              </span>
+              <span className="backup-option-tag backup-option-tag-optional">{t("默认不选")}</span>
+            </label>
+          </div>
+          <div className="settings-block stepwise-settings-block">
+            <div className="form-row">
+              <Button onClick={() => void actions.exportConfig()}>{t("导出配置")}</Button>
+              <Button variant="secondary" onClick={() => void actions.importConfig()}>
+                {t("导入配置")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Panel>
+      <Panel>
+        <CardHead
+          title={t("全局记忆")}
+          detail={t("开启后，这里的内容会写入 Codex 的 AGENTS.md，作为所有会话的全局指令；关闭并清空时由 Codex++ 自动移除（不影响你手动维护的 AGENTS.md）。")}
+        />
+        <CardContent className="settings-content">
+          <label className="switch-row">
+            <input
+              checked={form.globalMemoryEnabled}
+              onChange={(event) =>
+                onFormChange({ ...form, globalMemoryEnabled: event.currentTarget.checked })
+              }
+              type="checkbox"
+            />
+            <span>
+              <strong>{t("启用全局记忆")}</strong>
+              <small>{t("支持多行；留空等同于关闭。")}</small>
+            </span>
+            <ToggleVisual />
+          </label>
+          <Field label={t("记忆内容")}>
+            <Textarea
+              value={form.globalMemoryContent}
+              onChange={(event) =>
+                onFormChange({ ...form, globalMemoryContent: event.currentTarget.value })
+              }
+              placeholder={t("在此输入需要 Codex 长期记住的内容，例如偏好、约定、项目背景……")}
+              rows={8}
+            />
+          </Field>
         </CardContent>
       </Panel>
       <Panel>
@@ -10141,6 +10426,9 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     ...defaultSettings,
     ...settings,
     relayProfilesEnabled: settings.relayProfilesEnabled !== false,
+    universalModelCatalogEnabled: settings.universalModelCatalogEnabled !== false,
+    globalMemoryEnabled: settings.globalMemoryEnabled === true,
+    globalMemoryContent: settings.globalMemoryContent || "",
     codexAppImageOverlayOpacity: clampNumber(settings.codexAppImageOverlayOpacity || 35, 1, 100),
     codexAppImageOverlayFitMode: normalizeImageOverlayFitMode(settings.codexAppImageOverlayFitMode),
     codexAppDreamSkinPaused: settings.codexAppDreamSkinPaused === true,
@@ -11344,7 +11632,22 @@ function stringifyError(error: unknown) {
 
 function loadInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
-  return window.localStorage.getItem("codex-plus-theme") === "light" ? "light" : "dark";
+  const stored = window.localStorage.getItem("codex-plus-theme");
+  // 只接受已知的三态值，历史版本写入的其它内容一律回退到深色。
+  return THEME_CYCLE.find((value) => value === stored) ?? "dark";
+}
+
+function systemPrefersDark(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+}
+
+function resolveTheme(theme: Theme): ResolvedTheme {
+  if (theme === "system") return systemPrefersDark() ? "dark" : "light";
+  return theme;
 }
 
 function loadInitialRoute(): Route {

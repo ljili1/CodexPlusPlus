@@ -1385,7 +1385,14 @@ pub fn save_settings(settings: BackendSettings) -> CommandResult<SettingsPayload
         );
     }
     match store.save(&settings) {
-        Ok(()) => settings_payload("设置已保存。", "设置保存后重新读取失败"),
+        Ok(()) => {
+            let _ = codex_plus_core::global_memory::apply_global_memory(
+                &codex_plus_core::codex_home::default_codex_home_dir(),
+                settings.global_memory_enabled,
+                &settings.global_memory_content,
+            );
+            settings_payload("设置已保存。", "设置保存后重新读取失败")
+        }
         Err(error) => {
             let _ = codex_plus_core::dream_skin::sync_default_dream_skin_base_theme(
                 previous.enhancements_enabled && previous.codex_app_dream_skin_enabled,
@@ -5988,6 +5995,71 @@ pub async fn test_vlm(request: TestVlmRequest) -> CommandResult<TestVlmResult> {
         ok("VLM 测试成功。", result)
     } else {
         failed(&format!("VLM 测试失败：{}", outcome.status), result)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConfigBackupPayload {
+    pub files: usize,
+    pub bytes: u64,
+}
+
+fn format_byte_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    format!("{:.1} {}", size, UNITS[unit])
+}
+
+#[tauri::command]
+pub fn export_config(dest: String, options: codex_plus_core::config_backup::BackupOptions) -> CommandResult<ConfigBackupPayload> {
+    match codex_plus_core::config_backup::export_config(Path::new(&dest), &options) {
+        Ok(result) => ok(
+            &format!(
+                "已导出 {} 个文件，共 {}。",
+                result.files,
+                format_byte_size(result.bytes)
+            ),
+            ConfigBackupPayload {
+                files: result.files,
+                bytes: result.bytes,
+            },
+        ),
+        Err(error) => failed(
+            &format!("导出失败：{error}"),
+            ConfigBackupPayload {
+                files: 0,
+                bytes: 0,
+            },
+        ),
+    }
+}
+
+#[tauri::command]
+pub fn import_config(src: String) -> CommandResult<ConfigBackupPayload> {
+    match codex_plus_core::config_backup::import_config(Path::new(&src)) {
+        Ok(result) => ok(
+            &format!(
+                "已导入 {} 个文件，共 {}。重启 Codex++ 后生效。",
+                result.files,
+                format_byte_size(result.bytes)
+            ),
+            ConfigBackupPayload {
+                files: result.files,
+                bytes: result.bytes,
+            },
+        ),
+        Err(error) => failed(
+            &format!("导入失败：{error}"),
+            ConfigBackupPayload {
+                files: 0,
+                bytes: 0,
+            },
+        ),
     }
 }
 

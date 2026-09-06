@@ -388,8 +388,15 @@ pub struct BackendSettings {
     pub ccs_db_path: String,
     #[serde(rename = "relayProfilesEnabled", default = "default_true")]
     pub relay_profiles_enabled: bool,
+    /// 统一模型目录：把所有已配置供应商的模型合并到同一目录，并用供应商名做前缀。
+    #[serde(rename = "universalModelCatalogEnabled", default = "default_true")]
+    pub universal_model_catalog_enabled: bool,
     #[serde(rename = "enhancementsEnabled", default = "default_true")]
     pub enhancements_enabled: bool,
+    #[serde(rename = "globalMemoryEnabled", default)]
+    pub global_memory_enabled: bool,
+    #[serde(rename = "globalMemoryContent", default)]
+    pub global_memory_content: String,
     #[serde(rename = "codexAppPluginMarketplaceUnlock", default = "default_true")]
     pub codex_app_plugin_marketplace_unlock: bool,
     #[serde(rename = "codexAppModelWhitelistUnlock", default = "default_true")]
@@ -573,7 +580,10 @@ impl Default for BackendSettings {
             provider_sync_last_selected_provider: String::new(),
             ccs_db_path: String::new(),
             relay_profiles_enabled: true,
+            universal_model_catalog_enabled: true,
             enhancements_enabled: true,
+            global_memory_enabled: false,
+            global_memory_content: String::new(),
             codex_app_plugin_marketplace_unlock: true,
             codex_app_model_whitelist_unlock: true,
             codex_app_session_delete: true,
@@ -1238,6 +1248,11 @@ fn merge_known_setting_fields(target: &mut Map<String, Value>, source: &Map<Stri
     }
     if let Some(value) = source.get("relayProfilesEnabled").and_then(Value::as_bool) {
         target.insert("relayProfilesEnabled".to_string(), Value::Bool(value));
+    }
+    merge_bool_setting(target, source, "universalModelCatalogEnabled");
+    merge_bool_setting(target, source, "globalMemoryEnabled");
+    if let Some(value) = source.get("globalMemoryContent").and_then(Value::as_str) {
+        target.insert("globalMemoryContent".to_string(), Value::String(value.to_string()));
     }
     if let Some(value) = source.get("enhancementsEnabled").and_then(Value::as_bool) {
         target.insert("enhancementsEnabled".to_string(), Value::Bool(value));

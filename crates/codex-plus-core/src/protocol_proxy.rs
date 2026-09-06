@@ -577,11 +577,20 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
     }
     let context = RotationContext {
         conversation_id: conversation_id_from_responses_request(&request_json),
-    };
+    }
+    .with_model(Some(source_model.clone()));
     let (relay, relays) = if let Some(route) = &model_route {
         (route.relay.clone(), vec![route.relay.clone()])
     } else {
         let relay = crate::relay_rotation::select_relay_for_request(&settings, context)?;
+        // 「统一模型目录」里模型名携带的供应商前缀只是本地目录的展示形式，
+        // 发给上游前必须剥掉，否则上游不认识这个模型。
+        if let Some((resolved_id, upstream_model)) =
+            crate::relay_rotation::resolve_prefixed_model(&settings, &source_model)
+            && resolved_id == relay.id
+        {
+            request_json["model"] = Value::String(upstream_model);
+        }
         let mut relays = vec![relay.clone()];
         relays.extend(crate::relay_rotation::fallback_relays_after(
             &settings, &relay.id,
@@ -867,7 +876,24 @@ pub async fn open_chat_completions_proxy_request(
     original_user_agent: Option<&str>,
 ) -> anyhow::Result<UpstreamProxyResponse> {
     let settings = SettingsStore::default().load().unwrap_or_default();
-    let relay = settings.active_relay_profile();
+    let mut request_json: Value = serde_json::from_str(body)?;
+    let model_value = request_json
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    // 「统一模型目录」下模型名带供应商前缀，据此改投对应供应商并剥掉前缀。
+    let relay = match crate::relay_rotation::resolve_prefixed_model(&settings, &model_value) {
+        Some((relay_id, upstream_model)) => {
+            let profile = crate::relay_rotation::relay_profile_by_id(&settings, &relay_id)
+                .ok_or_else(|| anyhow::anyhow!("未找到前缀对应的供应商「{}」", relay_id))?;
+            if let Some(object) = request_json.as_object_mut() {
+                object.insert("model".to_string(), Value::String(upstream_model));
+            }
+            profile
+        }
+        None => settings.active_relay_profile(),
+    };
     if relay.protocol != RelayProtocol::ChatCompletions {
         anyhow::bail!("当前中转未启用 Chat Completions 协议代理");
     }
@@ -878,7 +904,6 @@ pub async fn open_chat_completions_proxy_request(
         anyhow::bail!("Chat Completions 上游 Key 不能为空");
     }
 
-    let request_json: Value = serde_json::from_str(body)?;
     let is_stream = request_json
         .get("stream")
         .and_then(Value::as_bool)

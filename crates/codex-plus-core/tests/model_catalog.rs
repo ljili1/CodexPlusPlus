@@ -206,6 +206,8 @@ async fn model_catalog_uses_active_relay_profile_model_list_and_actual_provider(
         let store = SettingsStore::new(settings_path);
         let mut settings = BackendSettings {
             active_relay_id: "relay-a".to_string(),
+            // 这里验证的是「单一供应商」目录，显式关掉统一模型目录。
+            universal_model_catalog_enabled: false,
             relay_profiles: vec![RelayProfile {
                 id: "relay-a".to_string(),
                 name: "Relay A".to_string(),

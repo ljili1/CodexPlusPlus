@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::settings::{RelayProfile, SettingsStore};
+use crate::relay_rotation::member_model_prefix;
+use crate::settings::{BackendSettings, RelayProfile, SettingsStore};
 use serde_json::{Map, Value, json};
 
 const BASE_URL_ENV_KEYS: &[&str] = &[
@@ -39,6 +40,10 @@ pub async fn read_codex_model_catalog() -> Value {
     let settings_path = crate::paths::default_settings_path();
     if settings_path.exists() {
         if let Ok(settings) = SettingsStore::new(settings_path).load() {
+            // 「统一模型目录」聚合所有供应商，走独立分支。
+            if settings.universal_model_catalog_enabled {
+                return universal_model_catalog_value(&home, &settings);
+            }
             let profile = settings.active_relay_profile();
             let catalog = relay_profile_model_catalog_value(&home, &profile);
             if catalog
@@ -136,6 +141,57 @@ fn relay_profile_model_ids(profile: &RelayProfile) -> Vec<String> {
             .map(ToString::to_string)
             .collect(),
     )
+}
+
+/// 「统一模型目录」：把所有已配置供应商的模型合并成一份目录，
+/// 每个模型名加上供应商显示名前缀（如 `我的供应商/gpt-5`），供协议代理反解。
+fn universal_model_catalog_value(home: &Path, settings: &BackendSettings) -> Value {
+    let mut models: Vec<String> = Vec::new();
+    // 用 HashSet 去重，避免供应商多、模型多时退化成 O(n²)。
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut sources: Vec<Value> = Vec::new();
+
+    for profile in &settings.relay_profiles {
+        if profile.id.trim().is_empty() {
+            continue;
+        }
+        let prefix = member_model_prefix(&profile.name, &profile.id);
+        let provider_name = if profile.name.trim().is_empty() {
+            profile.id.trim()
+        } else {
+            profile.name.trim()
+        };
+        let mut prefixed: Vec<String> = Vec::new();
+        for id in relay_profile_model_ids(profile) {
+            let full = format!("{prefix}{id}");
+            if seen.insert(full.clone()) {
+                models.push(full.clone());
+            }
+            prefixed.push(full);
+        }
+        sources.push(json!({
+            "id": format!("relay-profile:{}", profile.id),
+            "type": "relay_profile_model_list",
+            "name": provider_name,
+            "base_url": profile.base_url.trim(),
+            "status": if prefixed.is_empty() { "not_configured" } else { "ok" },
+            "models": prefixed.len(),
+            "responses_api": responses_api_status("unknown", "", "")
+        }));
+    }
+
+    let default_model = models.first().cloned().unwrap_or_default();
+    json!({
+        "status": if models.is_empty() { "not_configured" } else { "ok" },
+        "path": home.join("config.toml").to_string_lossy(),
+        "model": default_model,
+        "model_provider": "",
+        "provider_name": "",
+        "default_model": default_model,
+        "models": models,
+        "sources": sources,
+        "responses_api": responses_api_status("unknown", "", "")
+    })
 }
 
 fn model_ui_metadata_map(models: &[String]) -> Value {
