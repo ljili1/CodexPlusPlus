@@ -6074,14 +6074,24 @@ pub fn export_config(dest: String, options: codex_plus_core::config_backup::Back
 }
 
 #[tauri::command]
-pub fn import_config(src: String) -> CommandResult<ConfigBackupPayload> {
-    match codex_plus_core::config_backup::import_config(Path::new(&src)) {
+pub fn import_config(
+    src: String,
+    options: Option<codex_plus_core::config_backup::ImportOptions>,
+) -> CommandResult<ConfigBackupPayload> {
+    let import_options = options.unwrap_or_default();
+    match codex_plus_core::config_backup::import_config(Path::new(&src), &import_options) {
         Ok(result) => {
             let mut message = format!(
                 "已导入 {} 个文件，共 {}。重启 Codex++ 后生效。",
                 result.files,
                 format_byte_size(result.bytes)
             );
+            if result.skipped_existing > 0 {
+                message.push_str(&format!(
+                    "\n\n新增模式已保留 {} 个本地已有文件。",
+                    result.skipped_existing
+                ));
+            }
             if !result.warnings.is_empty() {
                 message.push_str("\n\n部分内容被跳过：");
                 for warning in &result.warnings {

@@ -1107,6 +1107,10 @@ export const EN_PLAIN: Record<string, string> = {
   "Codex++ 配置备份": "Codex++ config backup",
   "配置导出": "Export config",
   "配置导入": "Import config",
+  "导入时覆盖": "Overwrite on import",
+  "导入时新增": "Add new on import",
+  "导入时覆盖已有文件，或仅新增本地缺失的文件": "Overwrite existing files on import, or only add files missing locally",
+  "复选框选择导出内容；下拉选择导入行为：覆盖=替换本地文件，新增=保留本地已有文件、只补充缺失文件。": "Checkboxes choose what to export; the dropdown chooses import behavior: overwrite = replace local files, add new = keep existing local files and only add missing ones.",
   "配置备份": "Config backup",
   "选择要包含在备份包中的内容，再导出 / 导入。导出包为明文 zip，含密钥，请妥善保管。": "Choose what to include in the backup, then export / import. The archive is a plain-text zip that may contain secrets, keep it safe.",
   "配置与密钥": "Config & credentials",
@@ -1403,12 +1407,24 @@ export const EN_BACKEND_PATTERNS: Array<[RegExp, string]> = [
   [/^已导出 (\d+) 个文件，共 (.+)。$/, "Exported $1 file(s), $2 in total."],
   [/^导出失败：([\s\S]+)$/, "Export failed: $1"],
   [
+    /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。\n\n新增模式已保留 (\d+) 个本地已有文件。\n\n部分内容被跳过：([\s\S]+)$/,
+    "Imported $1 file(s), $2 in total. Restart Codex++ to apply.\n\nAdd-new mode kept $3 existing local file(s).\n\nSome entries were skipped:$4",
+  ],
+  [
+    /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。\n\n新增模式已保留 (\d+) 个本地已有文件。$/,
+    "Imported $1 file(s), $2 in total. Restart Codex++ to apply.\n\nAdd-new mode kept $3 existing local file(s).",
+  ],
+  [
     /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。\n\n部分内容被跳过：([\s\S]+)$/,
     "Imported $1 file(s), $2 in total. Restart Codex++ to apply.\n\nSome entries were skipped:$3",
   ],
   [
     /^已导入 (\d+) 个文件，共 (.+)。重启 Codex\+\+ 后生效。$/,
     "Imported $1 file(s), $2 in total. Restart Codex++ to apply.",
+  ],
+  [
+    /^新增模式已保留 (\d+) 个本地已有文件。$/,
+    "Add-new mode kept $1 existing local file(s).",
   ],
   [/^导入失败：([\s\S]+)$/, "Import failed: $1"],
   [

@@ -48,6 +48,10 @@ pub struct BackupResult {
     /// (e.g. SQLite databases still held open by a running process).
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Number of local files kept because the category was imported in
+    /// add-new mode and the file already existed.
+    #[serde(default)]
+    pub skipped_existing: usize,
 }
 
 /// Which categories to include in an export. Defaults to everything except
@@ -71,6 +75,96 @@ impl Default for BackupOptions {
             logs: false,
         }
     }
+}
+
+/// How to treat a category when importing a backup archive.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportMode {
+    /// Replace existing local files with the archived copies.
+    Overwrite,
+    /// Keep existing local files, only add files that are missing locally.
+    #[serde(rename = "add")]
+    AddNew,
+}
+
+/// Per-category import behavior. The default mirrors the legacy behavior
+/// (overwrite everything).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ImportOptions {
+    pub config: ImportMode,
+    pub history: ImportMode,
+    pub memories: ImportMode,
+    pub gui: ImportMode,
+    pub logs: ImportMode,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        Self {
+            config: ImportMode::Overwrite,
+            history: ImportMode::Overwrite,
+            memories: ImportMode::Overwrite,
+            gui: ImportMode::Overwrite,
+            logs: ImportMode::Overwrite,
+        }
+    }
+}
+
+impl ImportOptions {
+    fn mode_for(&self, prefix: &str, rest: &str) -> ImportMode {
+        match entry_category(prefix, rest) {
+            Some("config") => self.config,
+            Some("history") => self.history,
+            Some("memories") => self.memories,
+            Some("gui") => self.gui,
+            Some("logs") => self.logs,
+            _ => ImportMode::Overwrite,
+        }
+    }
+}
+
+/// Map a staged backup entry (`prefix`/`rest` inside the archive) to its
+/// backup category, using the same layout tables as `collect_export_entries`.
+/// Entries that belong to no known category default to overwrite.
+fn entry_category(prefix: &str, rest: &str) -> Option<&'static str> {
+    if prefix == CODEX_HOME_PREFIX {
+        for rel in codex_home_config_files() {
+            if rest == *rel {
+                return Some("config");
+            }
+        }
+        for rel in codex_home_config_dirs() {
+            if rest.starts_with(rel) {
+                return Some("config");
+            }
+        }
+        for base in codex_home_sqlite() {
+            if rest == *base || rest.starts_with(&format!("{base}-")) {
+                return Some("memories");
+            }
+        }
+        if rest == "logs_2.sqlite" || rest.starts_with("logs_2.sqlite-") {
+            return Some("logs");
+        }
+        for rel in codex_home_history_dirs() {
+            if rest.starts_with(rel) {
+                return Some("history");
+            }
+        }
+    } else if prefix == SESSION_DELETE_PREFIX {
+        for rel in session_delete_files() {
+            if rest == *rel {
+                return Some("gui");
+            }
+        }
+        for rel in session_delete_dirs() {
+            if rest.starts_with(rel) {
+                return Some("gui");
+            }
+        }
+    }
+    None
 }
 
 fn now_unix() -> u64 {
@@ -279,8 +373,9 @@ pub fn export_config(dest: &Path, options: &BackupOptions) -> Result<BackupResul
 }
 
 /// Import a previously exported configuration archive, restoring files to the
-/// current codex_home / session_delete locations.
-pub fn import_config(src: &Path) -> Result<BackupResult> {
+/// current codex_home / session_delete locations. `options` selects, per
+/// category, whether existing local files are overwritten or kept (add-new).
+pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult> {
     let file = fs::File::open(src)
         .with_context(|| format!("无法打开备份文件: {}", src.display()))?;
     let mut archive = ZipArchive::new(file)
@@ -302,8 +397,10 @@ pub fn import_config(src: &Path) -> Result<BackupResult> {
     let sess = session_delete_root();
 
     // First pass: read everything into memory so a corrupt archive cannot
-    // partially overwrite the live configuration.
+    // partially overwrite the live configuration. The per-entry import mode
+    // (overwrite vs add-new) is resolved here as well.
     let mut staged: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    let mut staged_modes: Vec<ImportMode> = Vec::new();
     for i in 0..archive.len() {
         let mut zf = archive
             .by_index(i)
@@ -320,11 +417,13 @@ pub fn import_config(src: &Path) -> Result<BackupResult> {
             SESSION_DELETE_PREFIX => &sess,
             _ => continue,
         };
+        let mode = options.mode_for(prefix, rest);
         let target = root.join(rest.replace('\\', "/"));
         let mut data = Vec::new();
         zf.read_to_end(&mut data)
             .with_context(|| format!("读取备份条目失败: {name}"))?;
         staged.push((target, data));
+        staged_modes.push(mode);
     }
 
     // Second pass: write. SQLite databases need special care: they (and
@@ -356,16 +455,24 @@ pub fn import_config(src: &Path) -> Result<BackupResult> {
         }
     }
 
-    for (idx, (target, data)) in staged.into_iter().enumerate() {
+    for (idx, ((target, data), mode)) in staged
+        .into_iter()
+        .zip(staged_modes)
+        .enumerate()
+    {
         if is_sidecar[idx] {
             // Sidecars are never restored from the archive; they are
             // cleared together with their main database below.
             continue;
         }
-        if let Some(group) = sidecar_group.get(&target) {
+        if sidecar_group.contains_key(&target) {
             // This is a SQLite main database. Sidecar entries themselves are
             // skipped by the `is_sidecar` branch above; here we only decide
             // whether the main database can be restored.
+            if mode == ImportMode::AddNew && target.exists() {
+                result.skipped_existing += 1;
+                continue;
+            }
             if is_locked(&target) {
                 result.warnings.push(format!(
                     "{}：正被其他程序占用，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）",
@@ -386,6 +493,10 @@ pub fn import_config(src: &Path) -> Result<BackupResult> {
             write_entry(&target, &data)?;
             result.files += 1;
             result.bytes += data.len() as u64;
+            continue;
+        }
+        if mode == ImportMode::AddNew && target.exists() {
+            result.skipped_existing += 1;
             continue;
         }
         if is_locked(&target) {
@@ -501,5 +612,42 @@ mod tests {
         let file = tmp.path().join("plain.toml");
         fs::write(&file, b"x").unwrap();
         assert!(!is_locked(&file));
+    }
+
+    #[test]
+    fn entry_category_classifies_layout() {
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, "config.toml"),
+            Some("config")
+        );
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, ".sandbox-secrets/key"),
+            Some("config")
+        );
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, "memories_1.sqlite"),
+            Some("memories")
+        );
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, "memories_1.sqlite-wal"),
+            Some("memories")
+        );
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, "sessions/a/thread.jsonl"),
+            Some("history")
+        );
+        assert_eq!(
+            entry_category(CODEX_HOME_PREFIX, "logs_2.sqlite-shm"),
+            Some("logs")
+        );
+        assert_eq!(
+            entry_category(SESSION_DELETE_PREFIX, "settings.json"),
+            Some("gui")
+        );
+        assert_eq!(
+            entry_category(SESSION_DELETE_PREFIX, "dream-skin/wall.png"),
+            Some("gui")
+        );
+        assert_eq!(entry_category(CODEX_HOME_PREFIX, "unknown.txt"), None);
     }
 }
