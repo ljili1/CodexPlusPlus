@@ -2987,6 +2987,18 @@ export function App() {
   useEffect(() => {
     void (async () => {
       const startup = await run(() => call<StartupResult>("startup_options"));
+      const pendingImport = await run(() =>
+        call<{ applied: number }>("pending_import_applied"),
+      );
+      if (pendingImport && pendingImport.applied > 0) {
+        showNotice(
+          t("配置导入"),
+          tf("上次导入暂存的 {0} 个文件已在本次启动时生效。", [
+            String(pendingImport.applied),
+          ]),
+          "ok",
+        );
+      }
       const handledNavigation = await consumePendingManagerNavigation();
       if (!handledNavigation && startup?.showUpdate) {
         setRoute("about");

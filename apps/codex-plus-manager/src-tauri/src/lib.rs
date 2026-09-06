@@ -41,6 +41,26 @@ pub fn run() {
         );
     }
     let show_update = commands::startup_should_show_update();
+    // Apply imports that were staged because their targets were locked
+    // during the previous run. Must happen before anything opens the
+    // Codex home databases.
+    match codex_plus_core::config_backup::apply_pending_config_import() {
+        Ok(applied) => {
+            if applied > 0 {
+                commands::record_pending_import_applied(applied);
+                let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                    "manager.pending_config_import_applied",
+                    serde_json::json!({ "applied": applied }),
+                );
+            }
+        }
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "manager.pending_config_import_apply_failed",
+                serde_json::json!({ "error": error.to_string() }),
+            );
+        }
+    }
     let app_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
@@ -185,6 +205,7 @@ pub fn run() {
             commands::clear_relay_injection,
             commands::export_config,
             commands::import_config,
+            commands::pending_import_applied,
             manager_exit_app,
             manager_hide_to_tray,
             update_tray_labels

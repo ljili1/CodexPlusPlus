@@ -1141,6 +1141,7 @@ export const EN_TEMPLATE: Record<string, string> = {
     "Route rule \"{0}\" priority must be an integer greater than or equal to 0.",
   "路由规则「{0}」的目标供应商必须是聚合成员，请先将其勾选为成员。":
     "Route rule \"{0}\" target provider must be an aggregate member; select it as a member first.",
+  "上次导入暂存的 {0} 个文件已在本次启动时生效。": "The {0} file(s) staged from the last import took effect on this launch.",
   "{0} 个模型": "{0} model(s)",
   "删除 Grok 模型「{0}」？": "Delete Grok model \"{0}\"?",
   "模型「{0}」的上下文窗口必须是大于 0 的整数。": "The context window for model \"{0}\" must be a positive integer.",
@@ -1428,12 +1429,15 @@ export const EN_BACKEND_PATTERNS: Array<[RegExp, string]> = [
   ],
   [/^导入失败：([\s\S]+)$/, "Import failed: $1"],
   [
-    /^(.+?)：正被其他程序占用，已跳过（关闭 Codex\+\+ 与 Codex 会话后重新导入）$/,
-    "$1: in use by another process, skipped (close Codex++ and Codex sessions, then import again)",
+    /^(.+?)：正被其他程序占用，已暂存，重启 Codex\+\+ 后自动生效$/,
+    "$1: in use by another process; staged and will apply automatically after restarting Codex++",
   ],
   [
-    /^(.+?)：数据库被占用，已跳过（关闭 Codex\+\+ 与 Codex 会话后重新导入）$/,
-    "$1: database in use, skipped (close Codex++ and Codex sessions, then import again)",
+    /^(.+?)：数据库被占用，已暂存，重启 Codex\+\+ 后自动生效$/,
+    "$1: database in use; staged and will apply automatically after restarting Codex++",
   ],
-  [/^(.+?)：文件被其他程序占用，已跳过$/, "$1: in use by another process, skipped"],
+  [
+    /^(.+?)：文件被其他程序占用，已暂存，重启 Codex\+\+ 后自动生效$/,
+    "$1: in use by another process; staged and will apply automatically after restarting Codex++",
+  ],
 ];
