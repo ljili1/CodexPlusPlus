@@ -9,6 +9,7 @@
 //! (auth.json, .sandbox-secrets). The UI is responsible for warning the user
 //! and confirming the import.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -43,6 +44,10 @@ pub struct BackupSourceInfo {
 pub struct BackupResult {
     pub files: usize,
     pub bytes: u64,
+    /// Human-readable notes about entries that were skipped during import
+    /// (e.g. SQLite databases still held open by a running process).
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Which categories to include in an export. Defaults to everything except
@@ -322,20 +327,120 @@ pub fn import_config(src: &Path) -> Result<BackupResult> {
         staged.push((target, data));
     }
 
-    // Second pass: write.
+    // Second pass: write. SQLite databases need special care: they (and
+    // their -wal/-shm sidecars) are typically held open by the running
+    // Codex / Codex++ processes, so a naive overwrite fails on Windows or,
+    // worse, corrupts the database. A busy database is skipped as a whole
+    // with a warning instead of failing the entire import.
     let mut result = BackupResult::default();
-    for (target, data) in staged {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("创建目录失败: {}", parent.display()))?;
+
+    // Map every SQLite sidecar entry (-wal / -shm) to its main database
+    // target so the trio can be handled together.
+    let mut sidecar_group: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+    let mut is_sidecar = vec![false; staged.len()];
+    for (idx, (target, _)) in staged.iter().enumerate() {
+        let name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        for suffix in ["-wal", "-shm"] {
+            if let Some(base) = name.strip_suffix(suffix) {
+                // Only *.sqlite-wal / *.sqlite-shm are SQLite sidecars; other
+                // files that merely end in "-wal"/"-shm" are regular entries.
+                if base.ends_with(".sqlite") {
+                    let main_target = target.with_file_name(base);
+                    sidecar_group.entry(main_target).or_default().push(idx);
+                    is_sidecar[idx] = true;
+                }
+            }
         }
-        fs::write(&target, &data)
-            .with_context(|| format!("写入失败: {}", target.display()))?;
+    }
+
+    for (idx, (target, data)) in staged.into_iter().enumerate() {
+        if is_sidecar[idx] {
+            // Sidecars are never restored from the archive; they are
+            // cleared together with their main database below.
+            continue;
+        }
+        if let Some(group) = sidecar_group.get(&target) {
+            // This is a SQLite main database. Sidecar entries themselves are
+            // skipped by the `is_sidecar` branch above; here we only decide
+            // whether the main database can be restored.
+            if is_locked(&target) {
+                result.warnings.push(format!(
+                    "{}：正被其他程序占用，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）",
+                    file_display_name(&target)
+                ));
+                continue;
+            }
+            // Drop stale local WAL/SHM sidecars so the restored snapshot is
+            // self-consistent. If a sidecar cannot be deleted the database
+            // is in fact still open somewhere: skip it as a whole.
+            if remove_sqlite_sidecars(&target).is_err() {
+                result.warnings.push(format!(
+                    "{}：数据库被占用，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）",
+                    file_display_name(&target)
+                ));
+                continue;
+            }
+            write_entry(&target, &data)?;
+            result.files += 1;
+            result.bytes += data.len() as u64;
+            continue;
+        }
+        if is_locked(&target) {
+            result.warnings.push(format!(
+                "{}：文件被其他程序占用，已跳过",
+                file_display_name(&target)
+            ));
+            continue;
+        }
+        write_entry(&target, &data)?;
         result.files += 1;
         result.bytes += data.len() as u64;
     }
 
     Ok(result)
+}
+
+/// `"name"` of a path, falling back to the full path when the file name is
+/// not valid Unicode.
+fn file_display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| path.to_string_lossy().into())
+}
+
+/// True if `path` exists and cannot be opened for writing, i.e. it is held
+/// open (locked) by another process. Missing files are writable.
+fn is_locked(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    fs::OpenOptions::new().write(true).open(path).is_err()
+}
+
+/// Delete the stale SQLite `-wal` / `-shm` sidecar files belonging to
+/// `main`. Fails when a sidecar cannot be removed (still mapped / locked),
+/// which reliably indicates the database is currently in use.
+fn remove_sqlite_sidecars(main: &Path) -> Result<()> {
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = PathBuf::from(format!("{}{}", main.display(), suffix));
+        if sidecar.exists() {
+            fs::remove_file(&sidecar)
+                .with_context(|| format!("无法删除 {}", sidecar.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn write_entry(target: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("创建目录失败: {}", parent.display()))?;
+    }
+    fs::write(target, data).with_context(|| format!("写入失败: {}", target.display()))
 }
 
 fn read_manifest(archive: &mut ZipArchive<fs::File>) -> Result<BackupManifest> {
@@ -372,5 +477,29 @@ mod tests {
         assert!(manifest.options.config && manifest.options.gui);
         // When present, at least the manifest contributes to the byte count.
         assert!(res.bytes > 0 || res.files >= 0);
+    }
+
+    #[test]
+    fn remove_sidecars_clears_wal_and_shm() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("test.sqlite");
+        fs::write(&db, b"db").unwrap();
+        fs::write(tmp.path().join("test.sqlite-wal"), b"wal").unwrap();
+        fs::write(tmp.path().join("test.sqlite-shm"), b"shm").unwrap();
+
+        remove_sqlite_sidecars(&db).unwrap();
+
+        assert!(db.exists());
+        assert!(!tmp.path().join("test.sqlite-wal").exists());
+        assert!(!tmp.path().join("test.sqlite-shm").exists());
+    }
+
+    #[test]
+    fn is_locked_false_for_missing_and_regular_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_locked(&tmp.path().join("missing.sqlite")));
+        let file = tmp.path().join("plain.toml");
+        fs::write(&file, b"x").unwrap();
+        assert!(!is_locked(&file));
     }
 }
