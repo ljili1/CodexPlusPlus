@@ -577,6 +577,7 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
     }
     let context = RotationContext {
         conversation_id: conversation_id_from_responses_request(&request_json),
+        ..Default::default()
     }
     .with_model(Some(source_model.clone()));
     let (relay, relays) = if let Some(route) = &model_route {
