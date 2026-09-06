@@ -396,11 +396,15 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
     let home = codex_home_root();
     let sess = session_delete_root();
 
+    // A fresh import supersedes anything staged by earlier imports.
+    let _ = fs::remove_dir_all(pending_import_dir());
+
     // First pass: read everything into memory so a corrupt archive cannot
     // partially overwrite the live configuration. The per-entry import mode
     // (overwrite vs add-new) is resolved here as well.
     let mut staged: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     let mut staged_modes: Vec<ImportMode> = Vec::new();
+    let mut staged_rels: Vec<(String, String)> = Vec::new();
     for i in 0..archive.len() {
         let mut zf = archive
             .by_index(i)
@@ -424,6 +428,7 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
             .with_context(|| format!("读取备份条目失败: {name}"))?;
         staged.push((target, data));
         staged_modes.push(mode);
+        staged_rels.push((prefix.to_string(), rest.to_string()));
     }
 
     // Second pass: write. SQLite databases need special care: they (and
@@ -455,9 +460,10 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
         }
     }
 
-    for (idx, ((target, data), mode)) in staged
+    for (idx, ((target, data), (mode, (prefix, rest)))) in staged
         .into_iter()
         .zip(staged_modes)
+        .zip(staged_rels)
         .enumerate()
     {
         if is_sidecar[idx] {
@@ -474,20 +480,28 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
                 continue;
             }
             if is_locked(&target) {
-                result.warnings.push(format!(
-                    "{}：正被其他程序占用，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）",
-                    file_display_name(&target)
-                ));
+                stage_pending_or_warn(
+                    &mut result,
+                    &prefix,
+                    &rest,
+                    &data,
+                    &file_display_name(&target),
+                    "正被其他程序占用",
+                );
                 continue;
             }
             // Drop stale local WAL/SHM sidecars so the restored snapshot is
             // self-consistent. If a sidecar cannot be deleted the database
             // is in fact still open somewhere: skip it as a whole.
             if remove_sqlite_sidecars(&target).is_err() {
-                result.warnings.push(format!(
-                    "{}：数据库被占用，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）",
-                    file_display_name(&target)
-                ));
+                stage_pending_or_warn(
+                    &mut result,
+                    &prefix,
+                    &rest,
+                    &data,
+                    &file_display_name(&target),
+                    "数据库被占用",
+                );
                 continue;
             }
             write_entry(&target, &data)?;
@@ -500,10 +514,14 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
             continue;
         }
         if is_locked(&target) {
-            result.warnings.push(format!(
-                "{}：文件被其他程序占用，已跳过",
-                file_display_name(&target)
-            ));
+            stage_pending_or_warn(
+                &mut result,
+                &prefix,
+                &rest,
+                &data,
+                &file_display_name(&target),
+                "文件被其他程序占用",
+            );
             continue;
         }
         write_entry(&target, &data)?;
@@ -512,6 +530,106 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
     }
 
     Ok(result)
+}
+
+/// Handle a target that could not be written because it is held open by
+/// another process: stage the archived copy so the next manager start can
+/// apply it automatically, and record a corresponding warning.
+fn stage_pending_or_warn(
+    result: &mut BackupResult,
+    prefix: &str,
+    rest: &str,
+    data: &[u8],
+    display_name: &str,
+    reason: &str,
+) {
+    match stage_pending_file(prefix, rest, data) {
+        Ok(()) => result.warnings.push(format!(
+            "{display_name}：{reason}，已暂存，重启 Codex++ 后自动生效"
+        )),
+        Err(_) => result.warnings.push(format!(
+            "{display_name}：{reason}，已跳过（关闭 Codex++ 与 Codex 会话后重新导入）"
+        )),
+    }
+}
+
+/// Directory holding files staged by an import that hit locked targets,
+/// to be applied automatically on the next manager start. Layout mirrors
+/// the backup archive: `<prefix>/<rest>` underneath this directory.
+fn pending_import_dir() -> PathBuf {
+    crate::paths::default_app_state_dir().join("pending-config-import")
+}
+
+fn stage_pending_file(prefix: &str, rest: &str, data: &[u8]) -> Result<()> {
+    let target = pending_import_dir()
+        .join(prefix)
+        .join(rest.replace('\\', "/"));
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("创建暂存目录失败: {}", parent.display()))?;
+    }
+    fs::write(&target, data).with_context(|| format!("暂存失败: {}", target.display()))
+}
+
+/// Apply files staged by a previous import that hit locked targets. Called
+/// at manager startup, before anything opens the Codex home databases.
+/// Best effort: a file that is still locked stays staged for the next
+/// start. Returns the number of files applied.
+pub fn apply_pending_config_import() -> Result<usize> {
+    let dir = pending_import_dir();
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let home = codex_home_root();
+    let sess = session_delete_root();
+    let mut applied = 0usize;
+
+    for pending in list_files(&dir)? {
+        let rel = match pending.strip_prefix(&dir) {
+            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        let Some((prefix, rest)) = rel.split_once('/') else {
+            // Stray file without a known prefix: drop it.
+            let _ = fs::remove_file(&pending);
+            continue;
+        };
+        let root = match prefix {
+            CODEX_HOME_PREFIX => &home,
+            SESSION_DELETE_PREFIX => &sess,
+            _ => {
+                let _ = fs::remove_file(&pending);
+                continue;
+            }
+        };
+        let target = root.join(rest);
+        let is_sqlite_main = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(".sqlite"))
+            .unwrap_or(false);
+        if is_locked(&target) {
+            // Still in use: retry on the next start.
+            continue;
+        }
+        if is_sqlite_main && remove_sqlite_sidecars(&target).is_err() {
+            // Database is in use after all: retry on the next start.
+            continue;
+        }
+        let Ok(data) = fs::read(&pending) else {
+            continue;
+        };
+        if write_entry(&target, &data).is_err() {
+            // Keep staged for the next start.
+            continue;
+        }
+        let _ = fs::remove_file(&pending);
+        applied += 1;
+    }
+
+    // Clean up the staging directory once everything was applied.
+    let _ = fs::remove_dir(&dir);
+    Ok(applied)
 }
 
 /// `"name"` of a path, falling back to the full path when the file name is

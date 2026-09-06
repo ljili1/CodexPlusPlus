@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6004,6 +6004,29 @@ pub struct ConfigBackupPayload {
     pub bytes: u64,
 }
 
+/// Files applied at manager start that had been staged by a previous
+/// import (their targets were locked while importing).
+static PENDING_IMPORT_APPLIED: AtomicUsize = AtomicUsize::new(0);
+
+/// Called from the manager setup hook after applying staged imports.
+pub fn record_pending_import_applied(applied: usize) {
+    PENDING_IMPORT_APPLIED.store(applied, Ordering::SeqCst);
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingImportAppliedPayload {
+    pub applied: usize,
+}
+
+#[tauri::command]
+pub fn pending_import_applied() -> CommandResult<PendingImportAppliedPayload> {
+    let applied = PENDING_IMPORT_APPLIED.load(Ordering::SeqCst);
+    ok(
+        &format!("已应用 {applied} 个上次暂存的导入文件。"),
+        PendingImportAppliedPayload { applied },
+    )
+}
+
 fn format_byte_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
     let mut size = bytes as f64;
@@ -6064,7 +6087,7 @@ pub fn import_config(
                     message.push_str("\n- ");
                     message.push_str(warning);
                 }
-                message.push_str("\n\n被占用的数据库需要关闭 Codex++ 后重新导入才会更新。");
+                message.push_str("\n\n被占用的内容已暂存，重启 Codex++ 后自动生效，无需重新导入。");
             }
             ok(
                 &message,
