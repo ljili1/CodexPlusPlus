@@ -8,6 +8,21 @@ use codex_plus_core::relay_rotation::{member_model_prefix, resolve_prefixed_mode
 use codex_plus_core::settings::{
     BackendSettings, RelayMode, RelayProfile, RelayProtocol, SettingsStore,
 };
+use std::sync::{Mutex, OnceLock};
+
+// `SETTINGS_PATH_FOR_TESTS` (set via `set_settings_path_for_tests`) is a
+// process-global override. Any test that rewrites it must not run
+// concurrently with another test that reads the settings path, otherwise a
+// test can observe another test's temporary settings and report a wrong
+// catalog status (ok / missing / not_configured). Serialize those tests
+// with one shared lock.
+static SETTINGS_PATH_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+fn settings_path_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    SETTINGS_PATH_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap()
+}
 
 fn profile(id: &str, name: &str, model_list: &str) -> RelayProfile {
     RelayProfile {
@@ -95,6 +110,7 @@ fn resolve_prefixed_model_keeps_non_ascii_model_names_intact() {
 
 #[tokio::test]
 async fn model_catalog_merges_all_providers_with_prefix_when_universal_enabled() {
+    let _guard = settings_path_test_guard();
     let temp = tempfile::tempdir().unwrap();
     let codex_home = temp.path().join("codex-home");
     std::fs::create_dir_all(&codex_home).unwrap();
@@ -159,6 +175,7 @@ async fn model_catalog_merges_all_providers_with_prefix_when_universal_enabled()
 
 #[tokio::test]
 async fn model_catalog_reports_not_configured_when_universal_has_no_models() {
+    let _guard = settings_path_test_guard();
     let temp = tempfile::tempdir().unwrap();
     let codex_home = temp.path().join("codex-home");
     std::fs::create_dir_all(&codex_home).unwrap();
