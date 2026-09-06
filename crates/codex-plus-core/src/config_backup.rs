@@ -460,18 +460,16 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
         }
     }
 
-    for (idx, ((target, data), (mode, (prefix, rest)))) in staged
-        .into_iter()
-        .zip(staged_modes)
-        .zip(staged_rels)
-        .enumerate()
-    {
+    for idx in 0..staged.len() {
+        let (target, data) = &staged[idx];
+        let mode = staged_modes[idx];
+        let (prefix, rest) = &staged_rels[idx];
         if is_sidecar[idx] {
             // Sidecars are never restored from the archive; they are
             // cleared together with their main database below.
             continue;
         }
-        if sidecar_group.contains_key(&target) {
+        if sidecar_group.contains_key(target) {
             // This is a SQLite main database. Sidecar entries themselves are
             // skipped by the `is_sidecar` branch above; here we only decide
             // whether the main database can be restored.
@@ -479,13 +477,13 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
                 result.skipped_existing += 1;
                 continue;
             }
-            if is_locked(&target) {
+            if is_locked(target) {
                 stage_pending_or_warn(
                     &mut result,
-                    &prefix,
-                    &rest,
-                    &data,
-                    &file_display_name(&target),
+                    prefix,
+                    rest,
+                    data,
+                    &file_display_name(target),
                     "正被其他程序占用",
                 );
                 continue;
@@ -493,18 +491,18 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
             // Drop stale local WAL/SHM sidecars so the restored snapshot is
             // self-consistent. If a sidecar cannot be deleted the database
             // is in fact still open somewhere: skip it as a whole.
-            if remove_sqlite_sidecars(&target).is_err() {
+            if remove_sqlite_sidecars(target).is_err() {
                 stage_pending_or_warn(
                     &mut result,
-                    &prefix,
-                    &rest,
-                    &data,
-                    &file_display_name(&target),
+                    prefix,
+                    rest,
+                    data,
+                    &file_display_name(target),
                     "数据库被占用",
                 );
                 continue;
             }
-            write_entry(&target, &data)?;
+            write_entry(target, data)?;
             result.files += 1;
             result.bytes += data.len() as u64;
             continue;
@@ -513,18 +511,18 @@ pub fn import_config(src: &Path, options: &ImportOptions) -> Result<BackupResult
             result.skipped_existing += 1;
             continue;
         }
-        if is_locked(&target) {
+        if is_locked(target) {
             stage_pending_or_warn(
                 &mut result,
-                &prefix,
-                &rest,
-                &data,
-                &file_display_name(&target),
+                prefix,
+                rest,
+                data,
+                &file_display_name(target),
                 "文件被其他程序占用",
             );
             continue;
         }
-        write_entry(&target, &data)?;
+        write_entry(target, data)?;
         result.files += 1;
         result.bytes += data.len() as u64;
     }
