@@ -8103,13 +8103,9 @@ select {
 
 .theme-segment button.active {
   background: hsl(var(--background));
-  color: hsl(var(--foreground));
+  color:  color: hsl(var(--foreground));
   box-shadow: 0 1px 2px hsl(var(--foreground) / 0.16);
 }
-@@ -5376,3 +5376,77 @@ select {
-   color: hsl(var(--foreground));
-   box-shadow: 0 1px 2px hsl(var(--foreground) / 0.16);
- }
 
 .backup-options {
   display: grid;
@@ -8183,4 +8179,22 @@ select {
   background: transparent;
   border: 1px solid hsl(var(--border));
   color: hsl(var(--muted-foreground));
+}
+
+.backup-import-mode {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.backup-import-mode:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
 }

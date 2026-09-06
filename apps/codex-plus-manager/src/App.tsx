@@ -181,6 +181,24 @@ const DefaultBackupOptions: BackupOptions = {
   logs: false,
 };
 
+type BackupImportMode = "overwrite" | "add";
+
+type BackupImportModes = {
+  config: BackupImportMode;
+  history: BackupImportMode;
+  memories: BackupImportMode;
+  gui: BackupImportMode;
+  logs: BackupImportMode;
+};
+
+const DefaultBackupImportModes: BackupImportModes = {
+  config: "overwrite",
+  history: "overwrite",
+  memories: "overwrite",
+  gui: "overwrite",
+  logs: "overwrite",
+};
+
 type PendingDreamSkinCommunityResult = CommandResult<{ versionId: string }>;
 
 type PendingDreamSkinRestart = {
@@ -2253,6 +2271,9 @@ export function App() {
   };
 
   const [backupOptions, setBackupOptions] = useState<BackupOptions>(DefaultBackupOptions);
+  const [backupImportModes, setBackupImportModes] = useState<BackupImportModes>(
+    DefaultBackupImportModes,
+  );
 
   const exportConfig = async () => {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
@@ -2303,7 +2324,7 @@ export function App() {
         : "";
     if (!src) return;
     const result = await run(() =>
-      call<ConfigBackupPayload>("import_config", { src }),
+      call<ConfigBackupPayload>("import_config", { src, options: backupImportModes }),
     );
     if (result) {
       showNotice(t("配置导入"), result.message, result.status);
@@ -3599,6 +3620,8 @@ export function App() {
               actions={actions}
               backupOptions={backupOptions}
               setBackupOptions={setBackupOptions}
+              backupImportModes={backupImportModes}
+              setBackupImportModes={setBackupImportModes}
             />
           ) : null}
         </section>
@@ -6533,6 +6556,27 @@ function AboutScreen({
   );
 }
 
+function BackupImportModeSelect({
+  mode,
+  onChange,
+}: {
+  mode: BackupImportMode;
+  onChange: (mode: BackupImportMode) => void;
+}) {
+  return (
+    <select
+      className="backup-import-mode"
+      title={t("导入时覆盖已有文件，或仅新增本地缺失的文件")}
+      value={mode}
+      onClick={(e) => e.preventDefault()}
+      onChange={(e) => onChange(e.target.value as BackupImportMode)}
+    >
+      <option value="overwrite">{t("导入时覆盖")}</option>
+      <option value="add">{t("导入时新增")}</option>
+    </select>
+  );
+}
+
 function SettingsScreen({
   dirty,
   settings,
@@ -6543,6 +6587,8 @@ function SettingsScreen({
   actions,
   backupOptions,
   setBackupOptions,
+  backupImportModes,
+  setBackupImportModes,
 }: {
   dirty: boolean;
   settings: SettingsResult | null;
@@ -6553,6 +6599,8 @@ function SettingsScreen({
   actions: Actions;
   backupOptions: BackupOptions;
   setBackupOptions: (value: BackupOptions) => void;
+  backupImportModes: BackupImportModes;
+  setBackupImportModes: (value: BackupImportModes) => void;
 }) {
   return (
     <div className="settings-page">
@@ -6779,6 +6827,10 @@ function SettingsScreen({
                 <span className="backup-option-title">{t("配置与密钥")}</span>
                 <span className="backup-option-hint">{t("config.toml / auth.json / .sandbox-secrets")}</span>
               </span>
+              <BackupImportModeSelect
+                mode={backupImportModes.config}
+                onChange={(mode) => setBackupImportModes({ ...backupImportModes, config: mode })}
+              />
               <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
             </label>
             <label className="backup-option">
@@ -6791,6 +6843,10 @@ function SettingsScreen({
                 <span className="backup-option-title">{t("对话历史")}</span>
                 <span className="backup-option-hint">{t("sessions / archived_sessions / skills")}</span>
               </span>
+              <BackupImportModeSelect
+                mode={backupImportModes.history}
+                onChange={(mode) => setBackupImportModes({ ...backupImportModes, history: mode })}
+              />
               <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
             </label>
             <label className="backup-option">
@@ -6803,6 +6859,10 @@ function SettingsScreen({
                 <span className="backup-option-title">{t("记忆目标状态库")}</span>
                 <span className="backup-option-hint">{t("memories / goals / state 等 .sqlite")}</span>
               </span>
+              <BackupImportModeSelect
+                mode={backupImportModes.memories}
+                onChange={(mode) => setBackupImportModes({ ...backupImportModes, memories: mode })}
+              />
               <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
             </label>
             <label className="backup-option">
@@ -6815,6 +6875,10 @@ function SettingsScreen({
                 <span className="backup-option-title">{t("界面设置")}</span>
                 <span className="backup-option-hint">{t("settings.json / dream-skin 壁纸")}</span>
               </span>
+              <BackupImportModeSelect
+                mode={backupImportModes.gui}
+                onChange={(mode) => setBackupImportModes({ ...backupImportModes, gui: mode })}
+              />
               <span className="backup-option-tag backup-option-tag-default">{t("默认")}</span>
             </label>
             <label className="backup-option">
@@ -6827,9 +6891,14 @@ function SettingsScreen({
                 <span className="backup-option-title">{t("日志")}</span>
                 <span className="backup-option-hint">{t("logs_2.sqlite，可能较大")}</span>
               </span>
+              <BackupImportModeSelect
+                mode={backupImportModes.logs}
+                onChange={(mode) => setBackupImportModes({ ...backupImportModes, logs: mode })}
+              />
               <span className="backup-option-tag backup-option-tag-optional">{t("默认不选")}</span>
             </label>
           </div>
+          <p className="backup-option-hint">{t("复选框选择导出内容；下拉选择导入行为：覆盖=替换本地文件，新增=保留本地已有文件、只补充缺失文件。")}</p>
           <div className="settings-block stepwise-settings-block">
             <div className="form-row">
               <Button onClick={() => void actions.exportConfig()}>{t("导出配置")}</Button>
