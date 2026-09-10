@@ -1,14 +1,17 @@
-name: PR build artifacts
+name: Windows PR build
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  windows-artifacts:
-    name: Windows artifacts (manual)
+  windows-installer:
+    name: Windows installer
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -21,6 +24,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        run: choco install nsis -y
 
       - name: Install frontend dependencies
         working-directory: apps/codex-plus-manager
@@ -51,9 +57,32 @@ jobs:
           Copy-Item target/release/codex-plus-plus.exe dist/windows/app/
           Copy-Item target/release/codex-plus-plus-manager.exe dist/windows/app/
 
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v", "V")
+          $version = $version -replace '[\\/]', '-'
+          if (-not $version -or $version -eq "main") {
+            $version = "0.0.0-${{ github.run_number }}"
+          }
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = "makensis"
+          }
+          Push-Location scripts/installer/windows
+          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" CodexPlusPlus.nsi
+          Pop-Location
+
       - name: Upload Windows binaries
         uses: actions/upload-artifact@v4
         with:
           name: codex-plus-plus-windows-binaries
           path: dist/windows/app/*
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-plus-plus-windows-installer
+          path: dist/windows/*.exe
           if-no-files-found: error

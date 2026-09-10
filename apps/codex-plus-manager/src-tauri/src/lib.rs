@@ -183,6 +183,8 @@ pub fn run() {
             commands::apply_relay_injection,
             commands::apply_pure_api_injection,
             commands::clear_relay_injection,
+            commands::export_config,
+            commands::import_config,
             manager_exit_app,
             manager_hide_to_tray,
             update_tray_labels
