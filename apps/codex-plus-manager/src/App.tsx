@@ -50,6 +50,7 @@ import {
   Palette,
   Play,
   MessageCircle,
+  Monitor,
   MoreHorizontal,
   PackageOpen,
   FileCode2,
@@ -1067,7 +1068,7 @@ const TOOL_ICONS: Record<string, string> = {
 };
 
 type Route = "overview" | "relay" | "multiLaunch" | "grok" | "claude" | "relayEnvironment" | "sessions" | "context" | "skills" | "weixin" | "enhance" | "dreamSkin" | "userScripts" | "pluginMarket" | "recommendations" | "agentCache" | "agentCollaboration" | "maintenance" | "about" | "settings";
-type Theme = "dark" | "light";
+type Theme = "system" | "dark" | "light";
 
 const MANAGER_NAVIGATION_EVENT = "manager-navigation-requested";
 
@@ -3401,9 +3402,17 @@ export function App() {
   }, [route]);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    document.documentElement.classList.toggle("light", theme === "light");
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const effective = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.classList.toggle("dark", effective === "dark");
+      document.documentElement.classList.toggle("light", effective === "light");
+    };
+    applyTheme();
     window.localStorage.setItem("codex-plus-theme", theme);
+    if (theme !== "system") return undefined;
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
   }, [theme]);
 
   useEffect(() => {
@@ -3704,7 +3713,7 @@ export function App() {
       refreshAutoTakeover: () => refreshAutoTakeover(false),
       takeOverNow: () => runAutoTakeoverCommand("take_over_codex_now"),
       pauseAutoTakeover: () => runAutoTakeoverCommand("pause_auto_takeover_for_instance"),
-      toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      toggleTheme: () => setTheme((current) => (current === "system" ? "light" : current === "light" ? "dark" : "system")),
     }),
     [route, launchForm, settingsForm, settings, overview, update, updateInstallProgress.active, logs, diagnostics, theme, relayFiles, localSessions, selectedProviderSyncTarget, envConflicts, relayEnvironment, ccsProviders, multiLaunchPending, multiLaunchInstances, multiLaunchInstancesLoading, multiLaunchActionPending, dreamSkinLibrary, dreamSkinMarket, dreamSkinCommunity, selectedDreamSkinTheme, savedDreamSkinThemeDraft, dreamSkinThemeDraft, dreamSkinDraftDirty, pendingDreamSkinRestart],
   );
@@ -8003,7 +8012,11 @@ function SettingsScreen({
           <div className="theme-row">
             <div>
               <strong>{t("界面主题")}</strong>
-              <span>{t("当前为")}{theme === "dark" ? t("深色") : t("浅色")}{t("模式。")}</span>
+              <span>
+                {theme === "system"
+                  ? t("跟随系统亮暗自动切换。")
+                  : `${t("当前为")}${theme === "dark" ? t("深色") : t("浅色")}${t("模式。")}`}
+              </span>
             </div>
             <Button variant="secondary" onClick={actions.toggleTheme}>{t("切换主题")}</Button>
           </div>
@@ -12470,7 +12483,11 @@ function ApplicationRail({
   onToggleTheme: () => void;
 }) {
   const languageLabel = getLanguage() === "en" ? t("切换到中文") : t("切换到英文");
-  const themeLabel = theme === "dark" ? t("切换到浅色") : t("切换到深色");
+  const themeLabel = theme === "system"
+    ? t("跟随系统")
+    : theme === "dark"
+      ? t("切换到浅色")
+      : t("切换到深色");
   return (
     <aside className="app-rail">
       <ToolSwitcher
@@ -12519,7 +12536,11 @@ function ApplicationRail({
             title={themeLabel}
             type="button"
           >
-            {theme === "dark" ? <Sun aria-hidden="true" className="rail-nav-icon" /> : <Moon aria-hidden="true" className="rail-nav-icon" />}
+            {theme === "system"
+              ? <Monitor aria-hidden="true" className="rail-nav-icon" />
+              : theme === "dark"
+                ? <Sun aria-hidden="true" className="rail-nav-icon" />
+                : <Moon aria-hidden="true" className="rail-nav-icon" />}
           </button>
         </div>
       </div>
@@ -15152,8 +15173,9 @@ function stringifyError(error: unknown) {
 }
 
 function loadInitialTheme(): Theme {
-  if (typeof window === "undefined") return "dark";
-  return window.localStorage.getItem("codex-plus-theme") === "light" ? "light" : "dark";
+  if (typeof window === "undefined") return "system";
+  const stored = window.localStorage.getItem("codex-plus-theme");
+  return stored === "light" || stored === "dark" ? stored : "system";
 }
 
 function loadInitialRoute(): Route {
