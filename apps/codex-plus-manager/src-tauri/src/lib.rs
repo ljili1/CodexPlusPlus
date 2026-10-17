@@ -79,7 +79,7 @@ pub fn run() {
                     .visible(true)
                     .focused(true)
                     .inner_size(1180.0, 820.0)
-                    .min_inner_size(960.0, 720.0);
+                    .min_inner_size(720.0, 560.0);
             if let Some(icon) = app.default_window_icon().cloned() {
                 main_window_builder = main_window_builder.icon(icon)?;
             }

@@ -671,6 +671,8 @@ export const EN_PLAIN: Record<string, string> = {
   "切换 thread 时恢复上一次浏览位置。": "Restore the last scroll position when switching threads.",
   "切换中": "Switching",
   "切换主题": "Toggle theme",
+  "跟随系统": "Follow system",
+  "跟随系统亮暗自动切换。": "Follows the system light/dark mode automatically.",
   "切换到此供应商时会写入 Codex 主目录的 auth.json": "Switching to this provider writes auth.json under the Codex home directory",
   "切换到此供应商时会写入的预览；上下文开关变化会立即反映": "Preview of what gets written when switching to this provider; context toggles are reflected immediately",
   "切换到中文": "Switch to Chinese",
